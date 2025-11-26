@@ -220,7 +220,7 @@ class GazeEncoderApp(QWidget):
         return browser_panel
 
     def _build_video_display(self) -> QFrame:
-        self.video_label = FlexibleLabel("ドラッグ&ドロップで動画を読み込み")
+        self.video_label = FlexibleLabel("Drag & drop a video to load")
         self.video_label.setMinimumSize(0, 0)
         self.video_label.setMinimumHeight(360)
         self.video_label.setSizePolicy(
@@ -238,7 +238,7 @@ class GazeEncoderApp(QWidget):
         return video_frame
 
     def _build_inspector_panel(self) -> QScrollArea:
-        self.full_path_label = QLabel("動画がロードされていません")
+        self.full_path_label = QLabel("No video loaded")
         self.full_path_label.setWordWrap(True)
         self.full_path_label.setMinimumWidth(0)
         self.full_path_label.setSizePolicy(
@@ -363,7 +363,7 @@ class GazeEncoderApp(QWidget):
         return center_split
 
     # ==================================================
-    # 設定ファイルから key/color を構築
+    # Build key/color map from settings
     # ==================================================
     def _build_label_map(self):
         mapping = {}
@@ -476,7 +476,7 @@ class GazeEncoderApp(QWidget):
             counts[mode] = counts.get(mode, 0) + 1
 
         if not counts:
-            return "    (動画を読み込んでください)"
+            return "    (Please load a video)"
 
         max_mode_len = max(len(mode) for mode in counts.keys())
         max_frames = max(counts.values())
@@ -511,18 +511,18 @@ class GazeEncoderApp(QWidget):
         app_lines = "\n".join(
             [f"    {k}: {v}" for k, v in self.app_actions.items()])
         return (
-            "ラベル統計:\n"
+            "Label stats:\n"
             f"{self._label_stats_lines()}"
             "\n\n"
-            "・アプリキー:\n"
+            "App keys:\n"
             f"{app_lines}\n"
             "\n"
-            "・ラベル付けキー:\n"
+            "Labeling keys:\n"
             f"{label_lines}\n"
             "\n"
-            "・default/scroll でモード切替\n"
-            "    default: キー押下でラベル→次フレーム / 長押しで連続\n"
-            "    scroll: キーを押しながらホイールで塗りつぶし\n"
+            "Switch mode with default/scroll\n"
+            "    default: Press key to label -> next frame / hold for continuous\n"
+            "    scroll: Hold key while using wheel to fill\n"
             "\n"
         )
 
@@ -539,7 +539,7 @@ class GazeEncoderApp(QWidget):
         return None
 
     # ==================================================
-    # resize 時にタイムラインを再描画
+    # Redraw timeline on resize
     # ==================================================
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -548,18 +548,18 @@ class GazeEncoderApp(QWidget):
             self.show_frame(self.last_frame_np, store_last=False)
 
     # ==================================================
-    # 動画ロード
+    # Video loading
     # ==================================================
     def select_video(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "動画を選択", "", "Video Files (*.mp4 *.avi *.mov *.mkv)")
+            self, "Select Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv)")
         if path:
             self.load_video(path)
 
     def load_video(self, path):
         ok = self.annotator.load_video(path)
         if not ok:
-            QMessageBox.warning(self, "エラー", "動画が開けませんでした")
+            QMessageBox.warning(self, "Error", "Could not open video")
             return
         self.build_video_list(path)
 
@@ -645,7 +645,7 @@ class GazeEncoderApp(QWidget):
                 self.load_video(self.video_list[row])
 
     # ==================================================
-    # タイムライン描画
+    # Timeline rendering
     # ==================================================
     def update_timeline(self):
         if not self.timeline_renderer:
@@ -658,7 +658,7 @@ class GazeEncoderApp(QWidget):
         )
 
     # ==================================================
-    # フレーム表示（オーバーレイ付き）
+    # Frame rendering (with overlay)
     # ==================================================
     def show_frame(self, frame, store_last=True):
         h, w = frame.shape[:2]
@@ -710,7 +710,7 @@ class GazeEncoderApp(QWidget):
             self.last_frame_np = frame
 
     # ==================================================
-    # 情報表示
+    # Info display
     # ==================================================
     def update_info_label(self):
         if not self.annotator.cap:
@@ -724,17 +724,17 @@ class GazeEncoderApp(QWidget):
         self.info_label.setText(f"Frame {frame_txt} | {label_text}")
 
     # ==================================================
-    # CSV保存
+    # CSV save
     # ==================================================
     def save_csv(self):
         if not self.annotator.cap:
-            QMessageBox.warning(self, "警告", "動画がロードされていません")
+            QMessageBox.warning(self, "Warning", "No video loaded")
             return
         self.annotator.save_csv()
-        QMessageBox.information(self, "保存完了", "CSVを保存しました")
+        QMessageBox.information(self, "Saved", "CSV saved")
 
     # ==================================================
-    # フレーム移動 + シークバー
+    # Frame navigation + seek bar
     # ==================================================
     def goto_frame(self, idx, do_label=False):
         frame = self.annotator.get_frame(idx)
@@ -767,7 +767,7 @@ class GazeEncoderApp(QWidget):
             self.goto_frame(value)
 
     # ==================================================
-    # 再生機能
+    # Playback
     # ==================================================
     def toggle_play(self):
         if not self.annotator.cap:
@@ -788,7 +788,7 @@ class GazeEncoderApp(QWidget):
         self.update_info_label()
 
     # ==================================================
-    # ラベリング (key)
+    # Labeling (key)
     # ==================================================
     def keyPressEvent(self, event):
         token = self._token_from_event(event)
@@ -887,7 +887,7 @@ class GazeEncoderApp(QWidget):
         self.goto_frame(next_idx, do_label=False)
 
     # ==================================================
-    # マウスホイールで前後
+    # Mouse wheel navigation
     # ==================================================
     def wheelEvent(self, event):
         if not self.annotator.cap:
@@ -928,14 +928,14 @@ class GazeEncoderApp(QWidget):
                 self.load_video(path)
 
     # ==================================================
-    # 終了時に保存
+    # Save on exit
     # ==================================================
     def closeEvent(self, event):
         self.annotator.save_csv()
         super().closeEvent(event)
 
     # ==================================================
-    # Fill-in 機能
+    # Fill-in feature
     # ==================================================
     def _find_neighbor_label(self, start_idx: int, step: int):
         idx = start_idx + step
@@ -948,27 +948,27 @@ class GazeEncoderApp(QWidget):
 
     def fill_between_labels(self):
         if not self.annotator.cap:
-            QMessageBox.warning(self, "警告", "動画がロードされていません")
+            QMessageBox.warning(self, "Warning", "No video loaded")
             return
 
         cur = self.annotator.current_frame
         current_label = self.annotator.get_label(cur)
         if current_label is not None:
-            QMessageBox.information(self, "警告", "Fillin は未ラベルフレーム上で実行してください")
+            QMessageBox.information(self, "Warning", "Run Fillin on an unlabeled frame")
             return
 
         prev_idx, prev_label = self._find_neighbor_label(cur, -1)
         next_idx, next_label = self._find_neighbor_label(cur, +1)
         if prev_label is None or next_label is None:
             QMessageBox.warning(
-                self, "警告", "Fillin を使う場合，カーソル前後の Label は一致している必要があります")
+                self, "Warning", "When using Fillin, labels before and after the cursor must match")
             return
 
         same_mode = prev_label["mode"] == next_label["mode"]
         same_group = prev_label.get("group", "") == next_label.get("group", "")
         if not (same_mode and same_group):
             QMessageBox.warning(
-                self, "警告", "Fillin を使う場合，カーソル前後の Label は一致している必要があります")
+                self, "Warning", "When using Fillin, labels before and after the cursor must match")
             return
 
         fill_mode = prev_label["mode"]
@@ -984,7 +984,7 @@ class GazeEncoderApp(QWidget):
                 filled += 1
 
         if filled == 0:
-            QMessageBox.information(self, "情報", "挟まれた未ラベルフレームがありません")
+            QMessageBox.information(self, "Info", "No unlabeled frames between labels")
             return
 
         self.annotator.save_csv()
