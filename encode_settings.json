@@ -1,0 +1,58 @@
+{
+  "labels": {
+    "a": {
+      "name": "video_L",
+      "group": "test",
+      "color": "#138AF2"
+    },
+    "d": {
+      "name": "video_R",
+      "group": "test",
+      "color": "#C5283D"
+    },
+    "s": {
+      "name": "no",
+      "group": "test",
+      "color": "#2e2829"
+    },
+    "q": {
+      "name": "see",
+      "group": "habi",
+      "color": "#FFC857"
+    },
+    "e": {
+      "name": "no",
+      "group": "habi",
+      "color": "#481D24"
+    }
+  },
+
+  "app_keys": {
+    "left":  "prev_frame",
+    "right": "next_frame",
+    "up":    "prev_video",
+    "down":  "next_video",
+    "space": "toggle_play",
+    "f":     "fillin",
+    "m":     "toggle_mode",
+    "t":     "toggle_display_format"
+  },
+
+  "mouse": {
+    "wheel_step": 1,
+    "wheel_fast_multiplier": 5
+  },
+
+  "timings": {
+    "label_delay_ms": 80,
+    "long_press_threshold_ms": 1500,
+    "auto_label_interval_ms": 33,
+    "playback_interval_ms": 33,
+    "scroll_label_cooldown_ms": 0
+  },
+
+  "timeline":{
+    "format" : "hh:mm:ss:ff",
+    "divisions": 10
+  }
+}
