@@ -20,7 +20,7 @@
       "group": "habi",
       "color": "#FFC857"
     },
-    "e": {
+    "w": {
       "name": "no",
       "group": "habi",
       "color": "#481D24"
@@ -33,7 +33,7 @@
     "up":    "prev_video",
     "down":  "next_video",
     "space": "toggle_play",
-    "f":     "fillin",
+    "x":     "fillin",
     "m":     "toggle_mode",
     "t":     "toggle_display_format"
   },
