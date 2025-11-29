@@ -31,7 +31,7 @@ class VideoAnnotatorCore:
 
         self.cap = cap
         self.path = filepath
-        self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.frame_count = self._probe_frame_count(cap)
         fps = float(self.cap.get(cv2.CAP_PROP_FPS))
         self.fps = fps if fps > 0 else 30.0
         self.current_frame = 0
@@ -54,6 +54,35 @@ class VideoAnnotatorCore:
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
         return True
+
+    def _probe_frame_count(self, cap: cv2.VideoCapture) -> int:
+        """
+        OpenCV's CAP_PROP_FRAME_COUNT can overreport. Try to seek to the last
+        frame; if that fails, rely on the position the backend landed on.
+        Fall back to a lightweight grab-count when needed.
+        """
+        reported = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if reported > 0:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, reported - 1))
+            ret, _ = cap.read()
+            if ret:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                return reported
+
+            fallback = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            if fallback > 0:
+                return fallback
+
+        count = 0
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        while True:
+            grabbed = cap.grab()
+            if not grabbed:
+                break
+            count += 1
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        return max(count, reported)
 
     def derive_csv_path(self):
         if not self.path:
