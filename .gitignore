@@ -3,7 +3,6 @@
 emcode_venv
 .vscode
 .python-version
-*.mp4
 *.csv
 
 # Byte-compiled / optimized / DLL files

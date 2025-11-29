@@ -1,6 +1,15 @@
 # MIGE (Manual Infant Gaze Encoder)
 Michael Makoto Martinsen
 
+## Overview
+- A simple tool to manually annotate gaze direction per video frame.
+- Drag in a video, step through frames, and assign labels with keyboard-driven workflows.
+- Saves annotations to a CSV (`<video_name>_labels.csv`) and renders a color-coded timeline of label spans.
+- Behavior and labeling scheme come from `encode_settings.json` (labels, colors, shortcuts, timing, timeline format).
+
+![](img/thumbnail.png)
+
+
 ## Setup
 - Make sure your Mac/Windows machine can run `pyenv`
   - Mac: [pyenv](https://github.com/pyenv/pyenv) 
@@ -14,12 +23,6 @@ Michael Makoto Martinsen
   source .venv/bin/activate        # or .venv\\Scripts\\activate on Windows
   pip install -r requirements.txt
   ```
-
-## What It Does
-- This is a tool to manually annotate gaze direction per video frame.
-- Drag in a video, step through frames, and assign labels with keyboard-driven workflows.
-- Saves annotations to a CSV (`<video_name>_labels.csv`) and renders a color-coded timeline of label spans.
-- Behavior and labeling scheme come from `encode_settings.json` (labels, colors, shortcuts, timing, timeline format).
 
 ## Running the App
 - Activate your virtualenv, then launch:
