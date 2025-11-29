@@ -2,7 +2,7 @@
 Michael Makoto Martinsen
 
 ## Overview
-- A simple tool to manually annotate gaze direction per video frame.
+- A simple tool to manually annotate gaze direction per video frame for infant research.
 - Drag in a video, step through frames, and assign labels with keyboard-driven workflows.
 - Saves annotations to a CSV (`<video_name>_labels.csv`) and renders a color-coded timeline of label spans.
 - Behavior and labeling scheme come from `encode_settings.json` (labels, colors, shortcuts, timing
