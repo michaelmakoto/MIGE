@@ -5,10 +5,11 @@ Michael Makoto Martinsen
 - A simple tool to manually annotate gaze direction per video frame.
 - Drag in a video, step through frames, and assign labels with keyboard-driven workflows.
 - Saves annotations to a CSV (`<video_name>_labels.csv`) and renders a color-coded timeline of label spans.
-- Behavior and labeling scheme come from `encode_settings.json` (labels, colors, shortcuts, timing, timeline format).
+- Behavior and labeling scheme come from `encode_settings.json` (labels, colors, shortcuts, timing
 
 ![](img/thumbnail.png)
 
+<div><video controls src="https://github.com/user-attachments/assets/73007d76-edd0-4f79-81b0-cf2bed1c3b53" muted="false"></video></div>
 
 ## Setup
 - Make sure your Mac/Windows machine can run `pyenv`
@@ -31,6 +32,10 @@ Michael Makoto Martinsen
   ```
 - Drag & drop a video file (mp4/avi/mov/mkv) into the window or click `+ Add Video`.
 - The browser pane lists all videos in the same directory so you can hop between them.
+- Use the control keymaps to label each frame
+- Each frames label will be sutomatically saves as a CSV (`<video_name>_labels.csv`) in the same folder as the video
+<div><video controls src="https://github.com/user-attachments/assets/b2ac5481-ef93-42b2-a052-215d4e302655" muted="false"></video></div>
+
 
 ## Controls (defaults from `encode_settings.json`)
 - App navigation: 
