@@ -1,3 +1,5 @@
+.DS_Store
+
 emcode_venv
 .vscode
 .python-version
