@@ -4,6 +4,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
+import av
 
 
 class VideoAnnotatorCore:
@@ -31,7 +32,6 @@ class VideoAnnotatorCore:
 
         self.cap = cap
         self.path = filepath
-        self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = float(self.cap.get(cv2.CAP_PROP_FPS))
         self.fps = fps if fps > 0 else 30.0
         self.current_frame = 0
@@ -39,6 +39,18 @@ class VideoAnnotatorCore:
 
         self.annotations.clear()
         self.load_csv(self.derive_csv_path())
+
+        # count the total number of  frames manually...i know its not smart but work
+        # videos exported by ffmpeg do not return the accurate frame number by
+        # cv2.CAP_PROP_FRAME_COUNT, so i wrote this 
+        # not sure if its scalable 
+        count = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            count += 1
+        self.frame_count = count
 
         # Cache first frames for snappier seeking.
         prime_count = min(60, self.frame_count)
