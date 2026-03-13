@@ -3,8 +3,9 @@ import os
 import cv2
 import numpy as np
 
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import QBuffer, QByteArray, QIODeviceBase, QTimer, Qt
 from PyQt6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
+from PyQt6.QtMultimedia import QAudioFormat, QAudioSink
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -27,6 +28,7 @@ from flexible_label import FlexibleLabel
 from settings_loader import SettingsLoader
 from timeline_renderer import TimelineRenderer
 from video_annotator import VideoAnnotatorCore
+from waveform_renderer import WaveformRenderer
 
 DEFAULT_COLOR = "#AAAAAA"
 
@@ -131,6 +133,7 @@ class GazeEncoderApp(QWidget):
 
         self.annotator = VideoAnnotatorCore()
         self.timeline_renderer: TimelineRenderer | None = None
+        self.waveform_renderer: WaveformRenderer | None = None
         self.last_frame_np: np.ndarray | None = None
         self.video_list: list[str] = []
         self.video_index: int = -1
@@ -151,6 +154,14 @@ class GazeEncoderApp(QWidget):
         self._selected_icon = self._make_red_dot_icon()
         self._empty_icon = QIcon()
         self.display_mode = "frames"
+
+        self._audio_samples: np.ndarray | None = None
+        self._audio_sample_rate: int = 0
+        self._audio_sink: QAudioSink | None = None
+        self._audio_buffer: QBuffer | None = None
+        self._audio_ba: QByteArray | None = None
+
+        self._zoom_level: int = 1
 
         self.init_ui()
 
@@ -339,15 +350,82 @@ class GazeEncoderApp(QWidget):
         self.timeline_renderer = TimelineRenderer(
             self.timeline_label, self.tick_label)
 
-        slider_and_timeline = QVBoxLayout()
-        slider_and_timeline.setContentsMargins(0, 0, 0, 0)
-        slider_and_timeline.setSpacing(4)
-        slider_and_timeline.addWidget(self.tick_label)
-        slider_and_timeline.addWidget(self.timeline_label)
-        slider_and_timeline.addWidget(self.seek_slider)
+        self.waveform_label = QLabel()
+        self.waveform_label.setMinimumHeight(60)
+        self.waveform_label.setMaximumHeight(60)
+        self.waveform_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.waveform_label.setStyleSheet("background-color: #0f1114;")
+
+        self.waveform_renderer = WaveformRenderer(self.waveform_label)
+
+        self._zoom_slider = QSlider(Qt.Orientation.Vertical)
+        self._zoom_slider.setMinimum(1)
+        self._zoom_slider.setMaximum(16)
+        self._zoom_slider.setValue(1)
+        self._zoom_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._zoom_slider.setFixedWidth(18)
+        self._zoom_slider.setStyleSheet(
+            """
+            QSlider::groove:vertical {
+                background: #2f343a;
+                width: 6px;
+                border-radius: 3px;
+            }
+            QSlider::handle:vertical {
+                background: #58a6ff;
+                border: none;
+                width: 16px;
+                height: 12px;
+                margin: 0 -5px;
+                border-radius: 2px;
+            }
+            QSlider::sub-page:vertical { background: #2f343a; }
+            QSlider::add-page:vertical { background: #3d7bc6; }
+            """
+        )
+        self._zoom_slider.valueChanged.connect(self._on_zoom_changed)
+
+        self._zoom_level_label = QLabel("x1")
+        self._zoom_level_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self._zoom_level_label.setFixedWidth(28)
+        self._zoom_level_label.setStyleSheet("color: #666; font-size: 8pt;")
+
+        zoom_col = QVBoxLayout()
+        zoom_col.setContentsMargins(0, 0, 4, 0)
+        zoom_col.setSpacing(2)
+        zoom_col.addWidget(self._zoom_slider, 1)
+        zoom_col.addWidget(self._zoom_level_label)
+
+        self._zoomable_content = QWidget()
+        zoomable_layout = QVBoxLayout()
+        zoomable_layout.setContentsMargins(0, 0, 0, 0)
+        zoomable_layout.setSpacing(4)
+        zoomable_layout.addWidget(self.waveform_label)
+        zoomable_layout.addWidget(self.tick_label)
+        zoomable_layout.addWidget(self.timeline_label)
+        self._zoomable_content.setLayout(zoomable_layout)
+
+        self._zoom_scroll = QScrollArea()
+        self._zoom_scroll.setWidget(self._zoomable_content)
+        self._zoom_scroll.setWidgetResizable(False)
+        self._zoom_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._zoom_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._zoom_scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        timeline_row = QHBoxLayout()
+        timeline_row.setContentsMargins(0, 0, 0, 0)
+        timeline_row.setSpacing(0)
+        timeline_row.addLayout(zoom_col)
+        timeline_row.addWidget(self._zoom_scroll, 1)
 
         bottom_layout = QVBoxLayout()
-        bottom_layout.addLayout(slider_and_timeline)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setSpacing(4)
+        bottom_layout.addLayout(timeline_row)
+        bottom_layout.addWidget(self.seek_slider)
         return bottom_layout
 
     def _build_center_split(self, browser_panel: QFrame, video_frame: QFrame, inspector_scroll: QScrollArea) -> QSplitter:
@@ -543,7 +621,7 @@ class GazeEncoderApp(QWidget):
     # ==================================================
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.update_timeline()
+        self._apply_zoom()
         if self.last_frame_np is not None:
             self.show_frame(self.last_frame_np, store_last=False)
 
@@ -583,6 +661,8 @@ class GazeEncoderApp(QWidget):
         self.label_delay_timer.stop()
         self.long_press_timer.stop()
         self.play_timer.stop()
+        self._audio_stop()
+        self._zoom_slider.setValue(1)
 
         dir_path = os.path.dirname(path)
         file_name = os.path.basename(path)
@@ -591,6 +671,7 @@ class GazeEncoderApp(QWidget):
 
         self.update_timeline()
         self.refresh_help_label()
+        self._load_waveform()
         self.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
         if self.last_frame_np is not None:
             self.show_frame(self.last_frame_np, store_last=False)
@@ -643,6 +724,93 @@ class GazeEncoderApp(QWidget):
             if row != self.video_index or not self.annotator.cap:
                 self.video_index = row
                 self.load_video(self.video_list[row])
+
+    # ==================================================
+    # Zoom
+    # ==================================================
+    def _on_zoom_changed(self, value: int):
+        self._zoom_level = value
+        self._zoom_level_label.setText(f"x{value}")
+        self._apply_zoom()
+
+    def _apply_zoom(self):
+        if not hasattr(self, "_zoom_scroll"):
+            return
+        vw = self._zoom_scroll.viewport().width()
+        if vw <= 1:
+            return
+        content_w = vw * self._zoom_level
+        for lbl in (self.waveform_label, self.tick_label, self.timeline_label):
+            lbl.setFixedWidth(content_w)
+        self._zoomable_content.setFixedWidth(content_w)
+        self.update_waveform()
+        self.update_timeline()
+        self._scroll_to_frame(self.annotator.current_frame)
+
+    def _scroll_to_frame(self, frame_idx: int):
+        if not hasattr(self, "_zoom_scroll") or self._zoom_level <= 1:
+            return
+        if self.annotator.frame_count <= 1:
+            return
+        vw = self._zoom_scroll.viewport().width()
+        content_w = vw * self._zoom_level
+        cx = int(frame_idx / (self.annotator.frame_count - 1) * (content_w - 1))
+        target = max(0, cx - vw // 2)
+        self._zoom_scroll.horizontalScrollBar().setValue(target)
+
+    # ==================================================
+    # Waveform + Audio
+    # ==================================================
+    def _load_waveform(self):
+        if not self.waveform_renderer:
+            return
+        samples, sample_rate = self.annotator.get_audio_samples()
+        self._audio_samples = samples
+        self._audio_sample_rate = sample_rate
+        if samples is not None:
+            self.waveform_renderer.set_audio(
+                samples, sample_rate, self.annotator.frame_count, self.annotator.fps)
+            self._setup_audio_sink()
+        else:
+            self.waveform_renderer.clear()
+            self._audio_sink = None
+            self._audio_ba = None
+        self.waveform_renderer.render(self.annotator.current_frame)
+
+    def _setup_audio_sink(self):
+        if self._audio_samples is None or self._audio_sample_rate == 0:
+            return
+        fmt = QAudioFormat()
+        fmt.setSampleRate(self._audio_sample_rate)
+        fmt.setChannelCount(1)
+        fmt.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+        pcm = (self._audio_samples * 32767).astype(np.int16).tobytes()
+        self._audio_ba = QByteArray(pcm)
+        self._audio_sink = QAudioSink(fmt)
+
+    def _audio_play_from_frame(self, frame_idx: int):
+        if self._audio_sink is None or self._audio_ba is None:
+            return
+        self._audio_sink.stop()
+        if self._audio_buffer:
+            self._audio_buffer.close()
+        sample_offset = int(frame_idx / max(1.0, self.annotator.fps) * self._audio_sample_rate)
+        sample_offset = max(0, min(sample_offset, self._audio_ba.size() // 2 - 1))
+        self._audio_buffer = QBuffer(self._audio_ba)
+        self._audio_buffer.open(QIODeviceBase.OpenModeFlag.ReadOnly)
+        self._audio_buffer.seek(sample_offset * 2)
+        self._audio_sink.start(self._audio_buffer)
+
+    def _audio_stop(self):
+        if self._audio_sink:
+            self._audio_sink.stop()
+        if self._audio_buffer:
+            self._audio_buffer.close()
+            self._audio_buffer = None
+
+    def update_waveform(self):
+        if self.waveform_renderer:
+            self.waveform_renderer.render(self.annotator.current_frame)
 
     # ==================================================
     # Timeline rendering
@@ -752,6 +920,8 @@ class GazeEncoderApp(QWidget):
         self.show_frame(frame)
         self.seek_slider.setValue(idx)
         self.update_info_label()
+        self.update_waveform()
+        self._scroll_to_frame(idx)
 
     def prev_frame(self):
         idx = max(0, self.annotator.current_frame - 1)
@@ -774,7 +944,9 @@ class GazeEncoderApp(QWidget):
             return
         if self.play_timer.isActive():
             self.play_timer.stop()
+            self._audio_stop()
         else:
+            self._audio_play_from_frame(self.annotator.current_frame)
             self.play_timer.start()
 
     def play_next_frame(self):
@@ -786,6 +958,8 @@ class GazeEncoderApp(QWidget):
         self.show_frame(frame)
         self.seek_slider.setValue(self.annotator.current_frame)
         self.update_info_label()
+        self.update_waveform()
+        self._scroll_to_frame(self.annotator.current_frame)
 
     # ==================================================
     # Labeling (key)

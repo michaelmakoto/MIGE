@@ -154,6 +154,31 @@ class VideoAnnotatorCore:
         return frame
 
     # -----------------------------
+    # Audio
+    # -----------------------------
+    def get_audio_samples(self) -> tuple["np.ndarray | None", int]:
+        """Return (mono float32 samples, sample_rate), or (None, 0) if no audio."""
+        if not self.path:
+            return None, 0
+        try:
+            clip = VideoFileClip(self.path)
+            if clip.audio is None:
+                clip.close()
+                return None, 0
+            sample_rate = int(clip.audio.fps)
+            samples = clip.audio.to_soundarray()
+            clip.close()
+            if samples.ndim > 1:
+                samples = samples.mean(axis=1)
+            samples = samples.astype(np.float32)
+            peak = np.max(np.abs(samples))
+            if peak > 0:
+                samples /= peak
+            return samples, sample_rate
+        except Exception:
+            return None, 0
+
+    # -----------------------------
     # Labels
     # -----------------------------
     def set_label(self, frame, mode, group):
