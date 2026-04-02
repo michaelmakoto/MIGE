@@ -421,11 +421,20 @@ class GazeEncoderApp(QWidget):
         timeline_row.addLayout(zoom_col)
         timeline_row.addWidget(self._zoom_scroll, 1)
 
+        seek_spacer = QWidget()
+        seek_spacer.setFixedWidth(32)  # matches zoom_col width (28px label + 4px right margin)
+
+        seek_row = QHBoxLayout()
+        seek_row.setContentsMargins(0, 0, 0, 0)
+        seek_row.setSpacing(0)
+        seek_row.addWidget(seek_spacer)
+        seek_row.addWidget(self.seek_slider, 1)
+
         bottom_layout = QVBoxLayout()
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(4)
         bottom_layout.addLayout(timeline_row)
-        bottom_layout.addWidget(self.seek_slider)
+        bottom_layout.addLayout(seek_row)
         return bottom_layout
 
     def _build_center_split(self, browser_panel: QFrame, video_frame: QFrame, inspector_scroll: QScrollArea) -> QSplitter:
