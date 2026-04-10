@@ -44,6 +44,8 @@
   },
 
   "timings": {
+    "forward_num_frames": 1,
+    "backward_num_frames": 10,
     "label_delay_ms": 10,
     "long_press_threshold_ms": 1500,
     "auto_label_interval_ms": 33,

@@ -119,6 +119,8 @@ class GazeEncoderApp(QWidget):
             "auto_label_interval_ms", 33)
         self.playback_interval_ms = self.settings.timings.get(
             "playback_interval_ms", 33)
+        self.forward_num_frames = self.settings.timings.get("forward_num_frames", 1)
+        self.backward_num_frames = self.settings.timings.get("backward_num_frames", 1)
 
         self.wheel_step = max(1, int(self.settings.mouse.get("wheel_step", 1)))
         self.wheel_fast_multiplier = max(
@@ -933,12 +935,12 @@ class GazeEncoderApp(QWidget):
         self._scroll_to_frame(idx)
 
     def prev_frame(self):
-        idx = max(0, self.annotator.current_frame - 1)
+        idx = max(0, self.annotator.current_frame - self.backward_num_frames)
         self.goto_frame(idx)
 
     def next_frame(self):
         idx = min(self.annotator.frame_count - 1,
-                  self.annotator.current_frame + 1)
+                  self.annotator.current_frame + self.forward_num_frames)
         self.goto_frame(idx)
 
     def seek_changed(self, value):
