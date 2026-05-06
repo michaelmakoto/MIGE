@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -146,11 +147,9 @@ class VideoAnnotatorCore:
                 ann = self.annotations[frame]
                 section = self.section_by_id(ann.get("section_ID"))
                 section_id = ann.get("section_ID")
-                section_label = ann.get("section_label", "")
-                if not section_label and section:
-                    section_label = section.label
+                section_label = section.label if section else ann.get("section_label", "")
                 group_id = ann.get("group_ID") or ann.get("group", "")
-                if not group_id and section:
+                if section and section.group_id:
                     group_id = section.group_id
                 writer.writerow(
                     {
@@ -190,7 +189,7 @@ class VideoAnnotatorCore:
                     end_frame=end_frame,
                 )
             )
-        self.sections.sort(key=lambda section: (section.start_frame, section.section_id))
+        self._renumber_sections_by_start()
 
     def save_sections(self):
         if not self.path:
@@ -214,6 +213,42 @@ class VideoAnnotatorCore:
             return max(0, frame)
         return max(0, min(self.frame_count - 1, int(frame)))
 
+    def _is_auto_section_label(self, label: str) -> bool:
+        clean = str(label or "").strip()
+        return not clean or re.fullmatch(r"Section\s+\d+", clean) is not None
+
+    def _renumber_sections_by_start(self):
+        old_to_new: dict[int, int] = {}
+        self.sections.sort(
+            key=lambda item: (item.start_frame, item.end_frame, item.section_id)
+        )
+
+        for new_id, section in enumerate(self.sections, start=1):
+            old_id = section.section_id
+            old_to_new[old_id] = new_id
+            section.section_id = new_id
+            if self._is_auto_section_label(section.label):
+                section.label = f"Section {new_id}"
+
+        if not old_to_new:
+            return
+
+        changed_annotations = False
+        for ann in self.annotations.values():
+            old_id = self._parse_int(ann.get("section_ID"))
+            if old_id not in old_to_new:
+                continue
+            new_id = old_to_new[old_id]
+            if old_id != new_id:
+                ann["section_ID"] = new_id
+                changed_annotations = True
+            if self._is_auto_section_label(str(ann.get("section_label", ""))):
+                ann["section_label"] = f"Section {new_id}"
+                changed_annotations = True
+
+        if changed_annotations:
+            self.dirty = True
+
     def next_section_id(self) -> int:
         if not self.sections:
             return 1
@@ -232,7 +267,7 @@ class VideoAnnotatorCore:
             end_frame=end_frame,
         )
         self.sections.append(section)
-        self.sections.sort(key=lambda item: (item.start_frame, item.section_id))
+        self._renumber_sections_by_start()
         self.sections_dirty = True
         self.save_sections()
         return section
@@ -259,13 +294,34 @@ class VideoAnnotatorCore:
             section.end_frame = self._clamp_frame(end_frame)
         if section.end_frame < section.start_frame:
             section.start_frame, section.end_frame = section.end_frame, section.start_frame
-        self.sections.sort(key=lambda item: (item.start_frame, item.section_id))
+        self._renumber_sections_by_start()
         self.sections_dirty = True
         self.save_sections()
         return section
 
+    def preview_update_section(
+        self,
+        section_id: int,
+        start_frame: int,
+        end_frame: int,
+    ) -> VideoSection | None:
+        section = self.section_by_id(section_id)
+        if section is None:
+            return None
+        section.start_frame = self._clamp_frame(start_frame)
+        section.end_frame = self._clamp_frame(end_frame)
+        if section.end_frame < section.start_frame:
+            section.start_frame, section.end_frame = section.end_frame, section.start_frame
+        return section
+
     def delete_section(self, section_id: int):
+        for ann in self.annotations.values():
+            if self._parse_int(ann.get("section_ID")) == section_id:
+                ann["section_ID"] = ""
+                ann["section_label"] = ""
+                self.dirty = True
         self.sections = [section for section in self.sections if section.section_id != section_id]
+        self._renumber_sections_by_start()
         self.sections_dirty = True
         self.save_sections()
 
@@ -312,14 +368,12 @@ class VideoAnnotatorCore:
                 continue
             section = self.section_by_id(ann.get("section_ID"))
             section_id = ann.get("section_ID")
-            section_label = ann.get("section_label", "")
+            section_label = section.label if section else ann.get("section_label", "")
             group_id = ann.get("group_ID") or ann.get("group", "")
             if section:
                 if section_id in ("", None):
                     section_id = section.section_id
-                if not section_label:
-                    section_label = section.label
-                if not group_id:
+                if section.group_id:
                     group_id = section.group_id
             key = (section_id or "", section_label, group_id, mode)
             rows[key] = rows.get(key, 0) + 1

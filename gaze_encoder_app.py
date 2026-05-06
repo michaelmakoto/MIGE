@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import shutil
 import subprocess
@@ -34,6 +35,7 @@ from PyQt6.QtWidgets import (
 )
 
 from flexible_label import FlexibleLabel
+from seekable_waveform_widget import SeekableWaveformWidget
 from section_timeline_widget import SectionTimelineWidget
 from settings_dialog import SettingsDialog
 from settings_loader import SettingsLoader
@@ -159,6 +161,11 @@ class GazeEncoderApp(QWidget):
         self.timeline_format = str(
             self.settings.timeline.get("format", "hh:mm:ss:ff"))
         self.default_section_seconds = self.settings.default_section_seconds()
+        self.enable_real_time_section_update = (
+            self.settings.enable_real_time_section_update()
+        )
+        self.section_label_presets: dict[int, dict[str, str]] = {}
+        self.section_label_presets_path = self.settings.resolve_section_labels_path()
         self.group_ids = list(self.settings.groups)
         try:
             self.timeline_divisions = max(
@@ -259,6 +266,37 @@ class GazeEncoderApp(QWidget):
         self.add_video_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.add_video_button.clicked.connect(self.select_video)
 
+        section_labels_box = QGroupBox("Section Labels")
+        section_labels_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        section_labels_layout = QVBoxLayout()
+        section_labels_layout.setContentsMargins(10, 10, 10, 10)
+        section_labels_layout.setSpacing(8)
+
+        self.section_labels_path_label = QLabel("")
+        self.section_labels_path_label.setWordWrap(True)
+
+        self.section_labels_widget = QListWidget()
+        self.section_labels_widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.section_labels_widget.setMaximumHeight(150)
+
+        section_label_buttons = QHBoxLayout()
+        self.change_section_labels_button = QPushButton("Change JSON")
+        self.change_section_labels_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.change_section_labels_button.clicked.connect(self.choose_section_labels_json)
+        self.apply_section_labels_button = QPushButton("Apply")
+        self.apply_section_labels_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.apply_section_labels_button.clicked.connect(
+            lambda: self.apply_section_label_presets(prompt_on_conflict=True, force_prompt=True)
+        )
+        section_label_buttons.addWidget(self.change_section_labels_button)
+        section_label_buttons.addWidget(self.apply_section_labels_button)
+
+        section_labels_layout.addWidget(self.section_labels_path_label)
+        section_labels_layout.addWidget(self.section_labels_widget)
+        section_labels_layout.addLayout(section_label_buttons)
+        section_labels_box.setLayout(section_labels_layout)
+        self.load_section_label_presets()
+
         settings_box = QGroupBox("Settings")
         settings_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         settings_layout = QFormLayout()
@@ -292,6 +330,7 @@ class GazeEncoderApp(QWidget):
         browser_layout.addWidget(browser_title)
         browser_layout.addWidget(self.add_video_button)
         browser_layout.addWidget(self.video_list_widget)
+        browser_layout.addWidget(section_labels_box)
         browser_layout.addWidget(settings_box)
 
         browser_panel = QFrame()
@@ -492,6 +531,7 @@ class GazeEncoderApp(QWidget):
 
         self.timeline_label = SectionTimelineWidget()
         self.timeline_label.sectionSelected.connect(self.select_section)
+        self.timeline_label.sectionPreviewChanged.connect(self.preview_section_from_timeline)
         self.timeline_label.sectionChanged.connect(self.move_section_from_timeline)
         self.timeline_label.sectionCreated.connect(self.create_section_from_timeline)
         self.timeline_label.sectionLabelEditRequested.connect(self.edit_section_label_inline)
@@ -510,7 +550,8 @@ class GazeEncoderApp(QWidget):
         self.timeline_renderer = TimelineRenderer(
             self.timeline_label, self.tick_label)
 
-        self.waveform_label = QLabel()
+        self.waveform_label = SeekableWaveformWidget()
+        self.waveform_label.frameRequested.connect(self.goto_frame)
         self.waveform_label.setMinimumHeight(60)
         self.waveform_label.setMaximumHeight(60)
         self.waveform_label.setSizePolicy(
@@ -609,6 +650,220 @@ class GazeEncoderApp(QWidget):
         center_split.setSizes([260, 1100, 360])
         return center_split
 
+    def _relative_to_settings_dir(self, path: str) -> str:
+        if not path:
+            return path
+        settings_dir = os.path.dirname(self.settings.path)
+        try:
+            common = os.path.commonpath([os.path.abspath(path), settings_dir])
+        except ValueError:
+            return path
+        if common == settings_dir:
+            return os.path.relpath(path, settings_dir)
+        return path
+
+    def load_section_label_presets(self):
+        self.section_label_presets = {}
+        self.section_label_presets_path = self.settings.resolve_section_labels_path()
+        if hasattr(self, "section_labels_path_label"):
+            self.section_labels_path_label.setText(
+                os.path.basename(self.section_label_presets_path)
+                if self.section_label_presets_path
+                else "No label file"
+            )
+        if not self.section_label_presets_path or not os.path.exists(self.section_label_presets_path):
+            self._refresh_section_label_presets_widget()
+            return
+
+        try:
+            with open(self.section_label_presets_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Section Labels",
+                f"Could not read section labels JSON:\n{exc}",
+            )
+            self._refresh_section_label_presets_widget()
+            return
+
+        raw_items = payload.get("default_section_labels", payload)
+        if isinstance(raw_items, dict):
+            raw_items = [
+                {
+                    "section_ID": section_id,
+                    "section_label": data.get("section_label", data.get("label", ""))
+                    if isinstance(data, dict)
+                    else str(data),
+                    "group_ID": data.get("group_ID", data.get("group", ""))
+                    if isinstance(data, dict)
+                    else "",
+                }
+                for section_id, data in raw_items.items()
+            ]
+
+        if not isinstance(raw_items, list):
+            self._refresh_section_label_presets_widget()
+            return
+
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            try:
+                section_id = int(item.get("section_ID"))
+            except Exception:
+                continue
+            label = str(item.get("section_label", item.get("label", ""))).strip()
+            group_id = str(item.get("group_ID", item.get("group", ""))).strip()
+            if label or group_id:
+                self.section_label_presets[section_id] = {
+                    "section_label": label,
+                    "group_ID": group_id,
+                }
+        self._refresh_section_label_presets_widget()
+
+    def _refresh_section_label_presets_widget(self):
+        if not hasattr(self, "section_labels_widget"):
+            return
+        self.section_labels_widget.clear()
+        if not self.section_label_presets:
+            self.section_labels_widget.addItem("No preset labels loaded")
+            return
+        for section_id, preset in sorted(self.section_label_presets.items()):
+            label = preset.get("section_label", "")
+            group_id = preset.get("group_ID", "")
+            self.section_labels_widget.addItem(f"{section_id}: {label} ({group_id})")
+
+    def choose_section_labels_json(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose Section Labels JSON",
+            self.section_label_presets_path,
+            "JSON Files (*.json)",
+        )
+        if not path:
+            return
+        self.settings.data.setdefault("sections", {})[
+            "section_labels_path"
+        ] = self._relative_to_settings_dir(path)
+        self.settings.save()
+        self.settings.reload()
+        self.load_section_label_presets()
+        self.apply_section_label_presets(prompt_on_conflict=True, force_prompt=True)
+
+    def _is_auto_section_label(self, label: str) -> bool:
+        clean = str(label or "").strip()
+        return not clean or re.fullmatch(r"Section\s+\d+", clean) is not None
+
+    def _section_label_conflicts(self) -> list[str]:
+        conflicts: list[str] = []
+        for section in self.annotator.sections:
+            preset = self.section_label_presets.get(section.section_id)
+            if not preset:
+                continue
+            preset_label = preset.get("section_label", "")
+            preset_group = preset.get("group_ID", "")
+            label_conflicts = (
+                preset_label
+                and section.label
+                and not self._is_auto_section_label(section.label)
+                and section.label != preset_label
+            )
+            group_conflicts = (
+                preset_group
+                and section.group_id
+                and section.group_id != preset_group
+            )
+            if label_conflicts or group_conflicts:
+                conflicts.append(
+                    f"Section {section.section_id}: {section.label or '(blank)'} / "
+                    f"{section.group_id or '(blank)'} -> {preset_label or '(blank)'} / "
+                    f"{preset_group or '(blank)'}"
+                )
+        return conflicts
+
+    def apply_section_label_presets(
+        self,
+        prompt_on_conflict: bool = False,
+        force_prompt: bool = False,
+    ) -> bool:
+        if not self.annotator.cap:
+            if force_prompt:
+                QMessageBox.warning(self, "Section Labels", "No video loaded")
+            return False
+        if not self.section_label_presets:
+            if force_prompt:
+                QMessageBox.warning(self, "Section Labels", "No preset labels loaded")
+            return False
+
+        conflicts = self._section_label_conflicts()
+        overwrite_manual = False
+        if conflicts and prompt_on_conflict:
+            preview = "\n".join(conflicts[:8])
+            if len(conflicts) > 8:
+                preview += f"\n...and {len(conflicts) - 8} more"
+            reply = QMessageBox.question(
+                self,
+                "Apply Section Labels",
+                "The section labels JSON has different names/groups than the current video sections.\n\n"
+                f"{preview}\n\n"
+                "Apply the JSON labels?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            overwrite_manual = reply == QMessageBox.StandardButton.Yes
+        elif force_prompt and not conflicts:
+            QMessageBox.information(
+                self,
+                "Apply Section Labels",
+                "No label conflicts were found. Preset labels were applied where section IDs matched.",
+            )
+
+        changed = False
+        for section in self.annotator.sections:
+            preset = self.section_label_presets.get(section.section_id)
+            if not preset:
+                continue
+            section_changed = False
+            preset_label = preset.get("section_label", "")
+            preset_group = preset.get("group_ID", "")
+            can_update_label = overwrite_manual or self._is_auto_section_label(section.label)
+            can_update_group = overwrite_manual or not section.group_id or section.group_id == preset_group
+            if preset_label and can_update_label and section.label != preset_label:
+                section.label = preset_label
+                changed = True
+                section_changed = True
+            if preset_group and can_update_group and section.group_id != preset_group:
+                section.group_id = preset_group
+                changed = True
+                section_changed = True
+
+            if section_changed:
+                for ann in self.annotator.annotations.values():
+                    try:
+                        ann_section_id = int(ann.get("section_ID"))
+                    except Exception:
+                        continue
+                    if ann_section_id != section.section_id:
+                        continue
+                    if preset_label and can_update_label:
+                        ann["section_label"] = section.label
+                    if preset_group and can_update_group:
+                        ann["group_ID"] = section.group_id
+                        ann["group"] = section.group_id
+
+        if changed:
+            self.annotator.sections_dirty = True
+            self.annotator.dirty = True
+            self.annotator.save_sections()
+            self._schedule_autosave()
+            self._refresh_sections_ui()
+            self.update_timeline()
+            self.update_info_label()
+            if self.last_frame_np is not None:
+                self.show_frame(self.last_frame_np, store_last=False)
+        return changed
+
     def _set_combo_items(self, combo: QComboBox, items: list[str], current: str = ""):
         combo.blockSignals(True)
         combo.clear()
@@ -648,13 +903,18 @@ class GazeEncoderApp(QWidget):
             self.app_actions = self._normalize_app_keys(self.settings.app_keys)
             self.qt_to_token = self._build_qt_keymap()
             self.default_section_seconds = self.settings.default_section_seconds()
+            self.enable_real_time_section_update = (
+                self.settings.enable_real_time_section_update()
+            )
             self.timeline_format = str(self.settings.timeline.get("format", "hh:mm:ss:ff"))
             self.timeline_divisions = max(1, int(self.settings.timeline.get("divisions", 10)))
             self._reload_group_combo()
             self._reload_section_editor_group_combo()
+            self.load_section_label_presets()
             self.default_duration_spin.blockSignals(True)
             self.default_duration_spin.setValue(self.default_section_seconds)
             self.default_duration_spin.blockSignals(False)
+            self.apply_section_label_presets(prompt_on_conflict=True)
             self.update_timeline()
             self.refresh_help_label()
 
@@ -890,6 +1150,7 @@ class GazeEncoderApp(QWidget):
         file_name = os.path.basename(path)
         self.filename_label.setText(file_name)
 
+        self.apply_section_label_presets(prompt_on_conflict=True)
         self._refresh_sections_ui()
         self.update_timeline()
         self.refresh_help_label()
@@ -986,6 +1247,8 @@ class GazeEncoderApp(QWidget):
     def _load_waveform(self):
         if not self.waveform_renderer:
             return
+        if isinstance(self.waveform_label, SeekableWaveformWidget):
+            self.waveform_label.set_context(self.annotator)
         samples, sample_rate = self.annotator.get_audio_samples()
         self._audio_samples = samples
         self._audio_sample_rate = sample_rate
@@ -1031,6 +1294,8 @@ class GazeEncoderApp(QWidget):
             self._audio_buffer = None
 
     def update_waveform(self):
+        if isinstance(self.waveform_label, SeekableWaveformWidget):
+            self.waveform_label.set_context(self.annotator)
         if self.waveform_renderer:
             self.waveform_renderer.render(self.annotator.current_frame)
 
@@ -1047,6 +1312,7 @@ class GazeEncoderApp(QWidget):
                 self.annotator,
                 self.selected_section_id,
                 self._default_section_frames(),
+                self.enable_real_time_section_update,
             )
 
     def update_timeline(self):
@@ -1147,9 +1413,74 @@ class GazeEncoderApp(QWidget):
             label=f"Section {next_id}",
         )
         self.selected_section_id = section.section_id
+        self.apply_section_label_presets(prompt_on_conflict=False)
         self._refresh_sections_ui()
         self.update_timeline()
         self.goto_frame(section.start_frame)
+
+    def _boundary_target_section(self) -> VideoSection | None:
+        return self.annotator.section_at_frame(self.annotator.current_frame)
+
+    def _set_section_boundary_at_cursor(self, boundary: str):
+        if not self.annotator.cap:
+            return
+
+        current = self.annotator.current_frame
+        section = self._boundary_target_section()
+        max_frame = max(0, self.annotator.frame_count - 1)
+        default_length = self._default_section_frames()
+
+        if section is None:
+            group_id = self.section_group_combo.currentText() if hasattr(self, "section_group_combo") else ""
+            next_id = self.annotator.next_section_id()
+            if boundary == "start":
+                start_frame = current
+                end_frame = min(max_frame, current + default_length - 1)
+            else:
+                start_frame = max(0, current - default_length + 1)
+                end_frame = current
+            section = self.annotator.add_section(
+                start_frame,
+                end_frame,
+                group_id=group_id,
+                label=f"Section {next_id}",
+            )
+            self.selected_section_id = section.section_id
+        elif boundary == "start":
+            self._warn_before_moving_section(section.section_id)
+            end_frame = section.end_frame
+            if current > end_frame:
+                end_frame = min(max_frame, current + default_length - 1)
+            section = self.annotator.update_section(
+                section.section_id,
+                start_frame=current,
+                end_frame=end_frame,
+            )
+        else:
+            self._warn_before_moving_section(section.section_id)
+            start_frame = section.start_frame
+            if current < start_frame:
+                start_frame = max(0, current - default_length + 1)
+            section = self.annotator.update_section(
+                section.section_id,
+                start_frame=start_frame,
+                end_frame=current,
+        )
+
+        if section:
+            self.selected_section_id = section.section_id
+        self.apply_section_label_presets(prompt_on_conflict=False)
+        self._refresh_sections_ui()
+        self.update_timeline()
+        self.update_info_label()
+        if self.last_frame_np is not None:
+            self.show_frame(self.last_frame_np, store_last=False)
+
+    def set_section_start_at_cursor(self):
+        self._set_section_boundary_at_cursor("start")
+
+    def set_section_end_at_cursor(self):
+        self._set_section_boundary_at_cursor("end")
 
     def _warn_before_moving_section(self, section_id: int):
         if self._has_shown_move_warning:
@@ -1172,8 +1503,19 @@ class GazeEncoderApp(QWidget):
         )
         if section:
             self.selected_section_id = section.section_id
+        self.apply_section_label_presets(prompt_on_conflict=False)
         self._refresh_sections_ui()
         self.update_timeline()
+
+    def preview_section_from_timeline(self, section_id: int, start_frame: int, end_frame: int):
+        section = self.annotator.preview_update_section(
+            section_id,
+            start_frame,
+            end_frame,
+        )
+        if section:
+            self.selected_section_id = section.section_id
+            self.update_timeline()
 
     def apply_section_editor(self):
         if self._updating_section_fields:
@@ -1212,6 +1554,7 @@ class GazeEncoderApp(QWidget):
             return
         self.annotator.delete_section(section.section_id)
         self.selected_section_id = None
+        self.apply_section_label_presets(prompt_on_conflict=False)
         self._refresh_sections_ui()
         self.update_timeline()
         self.update_info_label()
@@ -1569,6 +1912,12 @@ class GazeEncoderApp(QWidget):
             return
         if action == "toggle_display_format":
             self._toggle_display_format()
+            return
+        if action == "set_section_start":
+            self.set_section_start_at_cursor()
+            return
+        if action == "set_section_end":
+            self.set_section_end_at_cursor()
             return
 
         if token in self.label_map:

@@ -26,29 +26,31 @@
       "color": "#481D24"
     }
   },
-
   "app_keys": {
-    "left":  "prev_frame",
+    "left": "prev_frame",
     "right": "next_frame",
-    "up":    "prev_video",
-    "down":  "next_video",
+    "up": "prev_video",
+    "down": "next_video",
     "space": "toggle_play",
-    "x":     "fillin",
-    "m":     "toggle_mode",
-    "t":     "toggle_display_format"
+    "x": "fillin",
+    "m": "toggle_mode",
+    "t": "toggle_display_format",
+    "1": "set_section_start",
+    "2": "set_section_end"
   },
-
   "mouse": {
     "wheel_step": 1,
     "wheel_fast_multiplier": 5
   },
-
-  "groups": ["test", "habi"],
-
+  "groups": [
+    "test",
+    "habi"
+  ],
   "sections": {
-    "default_duration_seconds": 10
+    "default_duration_seconds": 10,
+    "enable_real_time_section_update": true,
+    "section_labels_path": "sections_settings.json"
   },
-
   "timings": {
     "forward_num_frames": 1,
     "backward_num_frames": 2,
@@ -58,9 +60,8 @@
     "playback_interval_ms": 33,
     "scroll_label_cooldown_ms": 0
   },
-
-  "timeline":{
-    "format" : "hh:mm:ss:ff",
+  "timeline": {
+    "format": "hh:mm:ss:ff",
     "divisions": 10
   }
 }

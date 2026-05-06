@@ -5,8 +5,10 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
+    QCheckBox,
     QLabel,
     QLineEdit,
+    QFileDialog,
     QPushButton,
     QDoubleSpinBox,
     QTableWidget,
@@ -29,9 +31,21 @@ class SettingsDialog(QDialog):
         self.default_duration_input.setValue(settings.default_section_seconds())
 
         self.groups_input = QLineEdit(", ".join(settings.groups))
+        self.real_time_section_update_input = QCheckBox()
+        self.real_time_section_update_input.setChecked(
+            settings.enable_real_time_section_update()
+        )
+        self.section_labels_path_input = QLineEdit(settings.section_labels_path())
+        self.section_labels_browse_button = QPushButton("Browse")
+        self.section_labels_browse_button.clicked.connect(self._browse_section_labels)
+        section_labels_row = QHBoxLayout()
+        section_labels_row.addWidget(self.section_labels_path_input, 1)
+        section_labels_row.addWidget(self.section_labels_browse_button)
 
         form = QFormLayout()
         form.addRow("Default section duration", self.default_duration_input)
+        form.addRow("Real-time section update", self.real_time_section_update_input)
+        form.addRow("Section labels JSON", section_labels_row)
         form.addRow("Group IDs", self.groups_input)
 
         self.label_table = QTableWidget(0, 4)
@@ -96,6 +110,16 @@ class SettingsDialog(QDialog):
         item = table.item(row, col)
         return item.text().strip() if item else ""
 
+    def _browse_section_labels(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose Section Labels JSON",
+            self.settings.resolve_section_labels_path(),
+            "JSON Files (*.json)",
+        )
+        if path:
+            self.section_labels_path_input.setText(path)
+
     def save_settings(self):
         labels = {}
         for row in range(self.label_table.rowCount()):
@@ -123,8 +147,11 @@ class SettingsDialog(QDialog):
         self.settings.data["labels"] = labels
         self.settings.data["app_keys"] = app_keys
         self.settings.data["groups"] = groups
-        self.settings.data.setdefault("sections", {})[
-            "default_duration_seconds"
-        ] = self.default_duration_input.value()
+        sections = self.settings.data.setdefault("sections", {})
+        sections["default_duration_seconds"] = self.default_duration_input.value()
+        sections["enable_real_time_section_update"] = (
+            self.real_time_section_update_input.isChecked()
+        )
+        sections["section_labels_path"] = self.section_labels_path_input.text().strip()
         self.settings.save()
         self.accept()

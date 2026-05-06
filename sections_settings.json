@@ -1,0 +1,44 @@
+{
+  "default_section_labels": [
+    {
+      "section_ID": 1,
+      "section_label": "pre_1",
+      "group_ID": "test"
+    },
+    {
+      "section_ID": 2,
+      "section_label": "pre_2",
+      "group_ID": "test"
+    },
+    {
+      "section_ID": 3,
+      "section_label": "habi_1",
+      "group_ID": "habi"
+    },
+    {
+      "section_ID": 4,
+      "section_label": "habi_2",
+      "group_ID": "habi"
+    },
+    {
+      "section_ID": 5,
+      "section_label": "habi_3",
+      "group_ID": "habi"
+    },
+    {
+      "section_ID": 6,
+      "section_label": "habi_4",
+      "group_ID": "habi"
+    },
+    {
+      "section_ID": 7,
+      "section_label": "post_1",
+      "group_ID": "test"
+    },
+    {
+      "section_ID": 8,
+      "section_label": "post_2",
+      "group_ID": "test"
+    }
+  ]
+}

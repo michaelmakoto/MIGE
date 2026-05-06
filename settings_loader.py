@@ -6,6 +6,10 @@ DEFAULT_SETTINGS_PATH = os.path.join(
     os.path.dirname(__file__),
     "encode_settings.json",
 )
+DEFAULT_SECTION_LABEL_FILENAMES = (
+    "sections_settings.json",
+    "section_settings.json",
+)
 
 
 class SettingsLoader:
@@ -57,3 +61,29 @@ class SettingsLoader:
             return float(self.sections.get("default_duration_seconds", 10))
         except Exception:
             return 10.0
+
+    def enable_real_time_section_update(self) -> bool:
+        value = self.sections.get("enable_real_time_section_update", True)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    def section_labels_path(self) -> str:
+        configured = str(self.sections.get("section_labels_path", "")).strip()
+        if configured:
+            return configured
+
+        base_dir = os.path.dirname(self.path)
+        for filename in DEFAULT_SECTION_LABEL_FILENAMES:
+            candidate = os.path.join(base_dir, filename)
+            if os.path.exists(candidate):
+                return filename
+        return DEFAULT_SECTION_LABEL_FILENAMES[0]
+
+    def resolve_section_labels_path(self) -> str:
+        path = self.section_labels_path()
+        if os.path.isabs(path):
+            return path
+        return os.path.join(os.path.dirname(self.path), path)
