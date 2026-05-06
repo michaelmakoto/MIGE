@@ -1,4 +1,7 @@
 import os
+import re
+import shutil
+import subprocess
 
 import cv2
 import numpy as np
@@ -8,10 +11,16 @@ from PyQt6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PyQt6.QtMultimedia import QAudioFormat, QAudioSink
 from PyQt6.QtWidgets import (
     QApplication,
+    QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -25,9 +34,11 @@ from PyQt6.QtWidgets import (
 )
 
 from flexible_label import FlexibleLabel
+from section_timeline_widget import SectionTimelineWidget
+from settings_dialog import SettingsDialog
 from settings_loader import SettingsLoader
 from timeline_renderer import TimelineRenderer
-from video_annotator import VideoAnnotatorCore
+from video_annotator import VideoAnnotatorCore, VideoSection
 from waveform_renderer import WaveformRenderer
 
 DEFAULT_COLOR = "#AAAAAA"
@@ -74,6 +85,26 @@ class GazeEncoderApp(QWidget):
                 border: 1px solid #3a3f45;
                 border-radius: 4px;
                 padding: 6px 8px;
+            }
+            QComboBox, QDoubleSpinBox {
+                background-color: #111317;
+                color: #e5e5e5;
+                border: 1px solid #3a3f45;
+                border-radius: 4px;
+                padding: 5px 8px;
+            }
+            QGroupBox {
+                border: 1px solid #2c3036;
+                border-radius: 6px;
+                margin-top: 12px;
+                padding-top: 12px;
+                font-weight: 600;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 8px;
+                padding: 0 4px;
+                color: #dfe3e8;
             }
             QListWidget {
                 background-color: #111317;
@@ -127,6 +158,8 @@ class GazeEncoderApp(QWidget):
             1, int(self.settings.mouse.get("wheel_fast_multiplier", 1)))
         self.timeline_format = str(
             self.settings.timeline.get("format", "hh:mm:ss:ff"))
+        self.default_section_seconds = self.settings.default_section_seconds()
+        self.group_ids = list(self.settings.groups)
         try:
             self.timeline_divisions = max(
                 1, int(self.settings.timeline.get("divisions", 10)))
@@ -139,6 +172,11 @@ class GazeEncoderApp(QWidget):
         self.last_frame_np: np.ndarray | None = None
         self.video_list: list[str] = []
         self.video_index: int = -1
+        self.selected_section_id: int | None = None
+        self._updating_section_fields = False
+        self._has_shown_move_warning = False
+        self.preview_brightness = 0
+        self.preview_contrast = 100
 
         self.label_timer = QTimer()
         self.label_timer.timeout.connect(self.auto_label_step)
@@ -152,6 +190,10 @@ class GazeEncoderApp(QWidget):
         self.play_timer = QTimer()
         self.play_timer.timeout.connect(self.play_next_frame)
         self.play_speed = 1.0
+
+        self.autosave_timer = QTimer()
+        self.autosave_timer.setSingleShot(True)
+        self.autosave_timer.timeout.connect(self._flush_autosave)
 
         self._selected_icon = self._make_red_dot_icon()
         self._empty_icon = QIcon()
@@ -217,13 +259,40 @@ class GazeEncoderApp(QWidget):
         self.add_video_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.add_video_button.clicked.connect(self.select_video)
 
+        settings_box = QGroupBox("Settings")
+        settings_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        settings_layout = QFormLayout()
+        settings_layout.setContentsMargins(10, 10, 10, 10)
+        settings_layout.setSpacing(8)
+
+        self.section_group_combo = QComboBox()
+        self.section_group_combo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._reload_group_combo()
+
+        self.default_duration_spin = QDoubleSpinBox()
+        self.default_duration_spin.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.default_duration_spin.setRange(0.1, 3600.0)
+        self.default_duration_spin.setDecimals(2)
+        self.default_duration_spin.setSuffix(" sec")
+        self.default_duration_spin.setValue(self.default_section_seconds)
+        self.default_duration_spin.valueChanged.connect(self._on_default_duration_changed)
+
+        self.settings_button = QPushButton("Edit Keys / Modes")
+        self.settings_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.settings_button.clicked.connect(self.open_settings_dialog)
+
+        settings_layout.addRow("Group ID", self.section_group_combo)
+        settings_layout.addRow("New length", self.default_duration_spin)
+        settings_layout.addRow(self.settings_button)
+        settings_box.setLayout(settings_layout)
+
         browser_layout = QVBoxLayout()
         browser_layout.setContentsMargins(10, 10, 10, 10)
         browser_layout.setSpacing(10)
         browser_layout.addWidget(browser_title)
         browser_layout.addWidget(self.add_video_button)
         browser_layout.addWidget(self.video_list_widget)
-        browser_layout.addStretch()
+        browser_layout.addWidget(settings_box)
 
         browser_panel = QFrame()
         browser_panel.setLayout(browser_layout)
@@ -251,11 +320,6 @@ class GazeEncoderApp(QWidget):
         return video_frame
 
     def _build_inspector_panel(self) -> QScrollArea:
-        self.full_path_label = QLabel("No video loaded")
-        self.full_path_label.setWordWrap(True)
-        self.full_path_label.setMinimumWidth(0)
-        self.full_path_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.filename_label = QLabel("")
         self.filename_label.setWordWrap(True)
         self.filename_label.setMinimumWidth(0)
@@ -265,20 +329,18 @@ class GazeEncoderApp(QWidget):
         self.info_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.mode_label = QLabel("Mode: default")
         self.mode_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.active_section_status_label = QLabel("Section: none")
+        self.active_section_status_label.setWordWrap(True)
         self.help_label = QLabel(self._build_help_text())
         self.help_label.setWordWrap(True)
         self.help_label.setMinimumWidth(320)
         self.help_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
-        inspector_title = QLabel("Inspector & Help")
+        inspector_title = QLabel("Editor")
         inspector_title.setObjectName("heading")
-        # details_label = QLabel("-- Video Details --")
-        # details_label.setObjectName("section")
         status_label = QLabel("-- Status --")
         status_label.setObjectName("section")
-        shortcuts_label = QLabel("-- Data & Shortcuts --")
-        shortcuts_label.setObjectName("section")
 
         nav_buttons = QHBoxLayout()
         nav_buttons.setSpacing(8)
@@ -292,13 +354,98 @@ class GazeEncoderApp(QWidget):
         nav_buttons.addWidget(self.next_button)
         nav_buttons.addStretch()
 
+        self.section_list_widget = QListWidget()
+        self.section_list_widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.section_list_widget.currentRowChanged.connect(self._on_section_row_changed)
+
+        self.add_section_button = QPushButton("+ Add Section")
+        self.add_section_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.add_section_button.clicked.connect(self.add_section_at_cursor)
+
+        self.delete_section_button = QPushButton("Delete Section")
+        self.delete_section_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.delete_section_button.clicked.connect(self.delete_selected_section)
+
+        section_buttons = QHBoxLayout()
+        section_buttons.addWidget(self.add_section_button)
+        section_buttons.addWidget(self.delete_section_button)
+
+        self.section_id_value = QLabel("-")
+        self.section_label_edit = QLineEdit()
+        self.section_label_edit.setPlaceholderText("Section label")
+        self.section_group_edit = QComboBox()
+        self._reload_section_editor_group_combo()
+        self.section_start_spin = QDoubleSpinBox()
+        self.section_start_spin.setDecimals(3)
+        self.section_start_spin.setSuffix(" sec")
+        self.section_start_spin.setRange(0, 24 * 60 * 60)
+        self.section_end_spin = QDoubleSpinBox()
+        self.section_end_spin.setDecimals(3)
+        self.section_end_spin.setSuffix(" sec")
+        self.section_end_spin.setRange(0, 24 * 60 * 60)
+        self.apply_section_button = QPushButton("Apply Section")
+        self.apply_section_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.apply_section_button.clicked.connect(self.apply_section_editor)
+
+        section_form = QFormLayout()
+        section_form.setContentsMargins(0, 0, 0, 0)
+        section_form.addRow("Section ID", self.section_id_value)
+        section_form.addRow("Label", self.section_label_edit)
+        section_form.addRow("Group ID", self.section_group_edit)
+        section_form.addRow("Start", self.section_start_spin)
+        section_form.addRow("End", self.section_end_spin)
+        section_form.addRow(self.apply_section_button)
+
+        section_box = QGroupBox("Sections")
+        section_layout = QVBoxLayout()
+        section_layout.addWidget(self.section_list_widget)
+        section_layout.addLayout(section_buttons)
+        section_layout.addLayout(section_form)
+        section_box.setLayout(section_layout)
+
+        self.brightness_value_label = QLabel("0")
+        self.brightness_slider = QSlider(Qt.Orientation.Horizontal)
+        self.brightness_slider.setRange(-100, 100)
+        self.brightness_slider.setValue(0)
+        self.brightness_slider.valueChanged.connect(self._on_preview_effect_changed)
+        self.contrast_value_label = QLabel("100%")
+        self.contrast_slider = QSlider(Qt.Orientation.Horizontal)
+        self.contrast_slider.setRange(50, 200)
+        self.contrast_slider.setValue(100)
+        self.contrast_slider.valueChanged.connect(self._on_preview_effect_changed)
+
+        effects_form = QFormLayout()
+        effects_form.setContentsMargins(0, 0, 0, 0)
+        brightness_row = QHBoxLayout()
+        brightness_row.addWidget(self.brightness_slider)
+        brightness_row.addWidget(self.brightness_value_label)
+        contrast_row = QHBoxLayout()
+        contrast_row.addWidget(self.contrast_slider)
+        contrast_row.addWidget(self.contrast_value_label)
+        effects_form.addRow("Brightness", brightness_row)
+        effects_form.addRow("Contrast", contrast_row)
+
+        effects_box = QGroupBox("Video Effects")
+        effects_box.setLayout(effects_form)
+
+        self.export_csv_button = QPushButton("Export CSV")
+        self.export_csv_button.clicked.connect(self.save_csv)
+        self.export_calc_button = QPushButton("Export Calculated CSV")
+        self.export_calc_button.clicked.connect(self.export_calculated_csv)
+        self.export_section_video_button = QPushButton("Export Selected Video")
+        self.export_section_video_button.clicked.connect(self.export_selected_section_video)
+
+        export_box = QGroupBox("Export")
+        export_layout = QVBoxLayout()
+        export_layout.addWidget(self.export_csv_button)
+        export_layout.addWidget(self.export_calc_button)
+        export_layout.addWidget(self.export_section_video_button)
+        export_box.setLayout(export_layout)
+
         inspector_layout = QVBoxLayout()
         inspector_layout.setContentsMargins(10, 10, 10, 10)
         inspector_layout.setSpacing(10)
         inspector_layout.addWidget(inspector_title)
-        # inspector_layout.addWidget(details_label)
-        inspector_layout.addWidget(QLabel("-- Directory:"))
-        inspector_layout.addWidget(self.full_path_label)
         inspector_layout.addWidget(QLabel("-- File:"))
         inspector_layout.addWidget(self.filename_label)
         inspector_layout.addSpacing(6)
@@ -307,6 +454,12 @@ class GazeEncoderApp(QWidget):
         inspector_layout.addWidget(status_label)
         inspector_layout.addWidget(self.info_label)
         inspector_layout.addWidget(self.mode_label)
+        inspector_layout.addWidget(self.active_section_status_label)
+        inspector_layout.addWidget(section_box, 2)
+        inspector_layout.addWidget(effects_box)
+        inspector_layout.addWidget(export_box)
+        shortcuts_label = QLabel("-- Keys --")
+        shortcuts_label.setObjectName("section")
         inspector_layout.addWidget(shortcuts_label)
         inspector_layout.addWidget(self.help_label)
         inspector_layout.addStretch()
@@ -337,11 +490,16 @@ class GazeEncoderApp(QWidget):
         self.long_press_timer.timeout.connect(self.start_continuous_labeling)
         self.is_long_press = False
 
-        self.timeline_label = QLabel()
-        self.timeline_label.setMinimumHeight(26)
+        self.timeline_label = SectionTimelineWidget()
+        self.timeline_label.sectionSelected.connect(self.select_section)
+        self.timeline_label.sectionChanged.connect(self.move_section_from_timeline)
+        self.timeline_label.sectionCreated.connect(self.create_section_from_timeline)
+        self.timeline_label.sectionLabelEditRequested.connect(self.edit_section_label_inline)
+        self.timeline_label.setMinimumHeight(96)
+        self.timeline_label.setMaximumHeight(96)
         self.timeline_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.timeline_label.setStyleSheet("background-color: #24272d;")
+        self.timeline_label.setStyleSheet("background-color: #15171b;")
 
         self.tick_label = QLabel()
         self.tick_label.setMinimumHeight(28)
@@ -450,6 +608,55 @@ class GazeEncoderApp(QWidget):
         center_split.setStretchFactor(2, 2)
         center_split.setSizes([260, 1100, 360])
         return center_split
+
+    def _set_combo_items(self, combo: QComboBox, items: list[str], current: str = ""):
+        combo.blockSignals(True)
+        combo.clear()
+        clean_items = [item for item in items if item]
+        if not clean_items:
+            clean_items = ["default"]
+        combo.addItems(clean_items)
+        if current and current in clean_items:
+            combo.setCurrentText(current)
+        combo.blockSignals(False)
+
+    def _reload_group_combo(self):
+        self.group_ids = list(self.settings.groups)
+        if hasattr(self, "section_group_combo"):
+            current = self.section_group_combo.currentText()
+            self._set_combo_items(self.section_group_combo, self.group_ids, current)
+
+    def _reload_section_editor_group_combo(self):
+        if hasattr(self, "section_group_edit"):
+            current = self.section_group_edit.currentText()
+            self._set_combo_items(self.section_group_edit, self.group_ids, current)
+        else:
+            self.section_group_edit = QComboBox()
+            self._set_combo_items(self.section_group_edit, self.group_ids)
+
+    def _on_default_duration_changed(self, value: float):
+        self.default_section_seconds = float(value)
+        self.settings.data.setdefault("sections", {})["default_duration_seconds"] = self.default_section_seconds
+        self.settings.save()
+        self._refresh_timeline_context()
+
+    def open_settings_dialog(self):
+        dialog = SettingsDialog(self.settings, self)
+        if dialog.exec():
+            self.settings.reload()
+            self.label_map = self._build_label_map()
+            self.app_actions = self._normalize_app_keys(self.settings.app_keys)
+            self.qt_to_token = self._build_qt_keymap()
+            self.default_section_seconds = self.settings.default_section_seconds()
+            self.timeline_format = str(self.settings.timeline.get("format", "hh:mm:ss:ff"))
+            self.timeline_divisions = max(1, int(self.settings.timeline.get("divisions", 10)))
+            self._reload_group_combo()
+            self._reload_section_editor_group_combo()
+            self.default_duration_spin.blockSignals(True)
+            self.default_duration_spin.setValue(self.default_section_seconds)
+            self.default_duration_spin.blockSignals(False)
+            self.update_timeline()
+            self.refresh_help_label()
 
     # ==================================================
     # Build key/color map from settings
@@ -646,10 +853,15 @@ class GazeEncoderApp(QWidget):
             self.load_video(path)
 
     def load_video(self, path):
+        self._flush_autosave()
+        if self.annotator.sections_dirty:
+            self.annotator.save_sections()
         ok = self.annotator.load_video(path)
         if not ok:
             QMessageBox.warning(self, "Error", "Could not open video")
             return
+        self.selected_section_id = None
+        self._has_shown_move_warning = False
         self.build_video_list(path)
 
         self.seek_slider.setMaximum(self.annotator.frame_count - 1)
@@ -675,11 +887,10 @@ class GazeEncoderApp(QWidget):
         self._audio_stop()
         self._zoom_slider.setValue(1)
 
-        dir_path = os.path.dirname(path)
         file_name = os.path.basename(path)
-        self.full_path_label.setText(dir_path)
         self.filename_label.setText(file_name)
 
+        self._refresh_sections_ui()
         self.update_timeline()
         self.refresh_help_label()
         self._load_waveform()
@@ -826,19 +1037,256 @@ class GazeEncoderApp(QWidget):
     # ==================================================
     # Timeline rendering
     # ==================================================
+    def _default_section_frames(self) -> int:
+        fps = self.annotator.fps if self.annotator.fps else 30.0
+        return max(1, int(round(self.default_section_seconds * fps)))
+
+    def _refresh_timeline_context(self):
+        if isinstance(self.timeline_label, SectionTimelineWidget):
+            self.timeline_label.set_context(
+                self.annotator,
+                self.selected_section_id,
+                self._default_section_frames(),
+            )
+
     def update_timeline(self):
         if not self.timeline_renderer:
             return
+        self._refresh_timeline_context()
         self.timeline_renderer.render(
             self.annotator,
             self.color_for_mode,
             self._format_frame_display,
             self.timeline_divisions,
+            self.selected_section_id,
         )
+
+    def _frame_to_seconds(self, frame: int) -> float:
+        return frame / max(self.annotator.fps, 1.0)
+
+    def _seconds_to_frame(self, seconds: float) -> int:
+        return int(round(seconds * max(self.annotator.fps, 1.0)))
+
+    def _selected_section(self) -> VideoSection | None:
+        if self.selected_section_id is None:
+            return None
+        return self.annotator.section_by_id(self.selected_section_id)
+
+    def _section_display_name(self, section: VideoSection) -> str:
+        label = section.label.strip() or f"Section {section.section_id}"
+        start = self._format_timecode(section.start_frame)
+        end = self._format_timecode(section.end_frame)
+        return f"{section.section_id} | {label} | {section.group_id} | {start}-{end}"
+
+    def _refresh_sections_ui(self):
+        if not hasattr(self, "section_list_widget"):
+            return
+        self._updating_section_fields = True
+        self.section_list_widget.clear()
+        for section in self.annotator.sections:
+            item = QListWidgetItem(self._section_display_name(section))
+            item.setData(Qt.ItemDataRole.UserRole, section.section_id)
+            self.section_list_widget.addItem(item)
+            if section.section_id == self.selected_section_id:
+                self.section_list_widget.setCurrentItem(item)
+        self._updating_section_fields = False
+        self._load_section_editor()
+
+    def _load_section_editor(self):
+        section = self._selected_section()
+        self._updating_section_fields = True
+        if section is None:
+            self.section_id_value.setText("-")
+            self.section_label_edit.setText("")
+            self.section_start_spin.setValue(0)
+            self.section_end_spin.setValue(0)
+        else:
+            self.section_id_value.setText(str(section.section_id))
+            self.section_label_edit.setText(section.label)
+            self.section_group_edit.setCurrentText(section.group_id)
+            self.section_start_spin.setValue(self._frame_to_seconds(section.start_frame))
+            self.section_end_spin.setValue(self._frame_to_seconds(section.end_frame))
+        self._updating_section_fields = False
+
+    def _on_section_row_changed(self, row: int):
+        if self._updating_section_fields or row < 0:
+            return
+        item = self.section_list_widget.item(row)
+        if item is None:
+            return
+        section_id = item.data(Qt.ItemDataRole.UserRole)
+        self.select_section(section_id, jump=True)
+
+    def select_section(self, section_id: int, jump: bool = False):
+        section = self.annotator.section_by_id(section_id)
+        if section is None:
+            return
+        self.selected_section_id = section.section_id
+        self._refresh_sections_ui()
+        self.update_timeline()
+        if jump:
+            self.goto_frame(section.start_frame)
+
+    def add_section_at_cursor(self):
+        if not self.annotator.cap:
+            QMessageBox.warning(self, "Warning", "No video loaded")
+            return
+        start = self.annotator.current_frame
+        end = start + self._default_section_frames() - 1
+        self.create_section_from_timeline(start, end)
+
+    def create_section_from_timeline(self, start_frame: int, end_frame: int):
+        if not self.annotator.cap:
+            return
+        group_id = self.section_group_combo.currentText() if hasattr(self, "section_group_combo") else ""
+        next_id = self.annotator.next_section_id()
+        section = self.annotator.add_section(
+            start_frame,
+            end_frame,
+            group_id=group_id,
+            label=f"Section {next_id}",
+        )
+        self.selected_section_id = section.section_id
+        self._refresh_sections_ui()
+        self.update_timeline()
+        self.goto_frame(section.start_frame)
+
+    def _warn_before_moving_section(self, section_id: int):
+        if self._has_shown_move_warning:
+            return
+        if self.annotator.annotation_count_for_section_id(section_id) <= 0:
+            return
+        QMessageBox.information(
+            self,
+            "Section moved",
+            "Existing encoded rows will stay on their original frames. Moving the section only changes the highlighted range for future encoding.",
+        )
+        self._has_shown_move_warning = True
+
+    def move_section_from_timeline(self, section_id: int, start_frame: int, end_frame: int):
+        self._warn_before_moving_section(section_id)
+        section = self.annotator.update_section(
+            section_id,
+            start_frame=start_frame,
+            end_frame=end_frame,
+        )
+        if section:
+            self.selected_section_id = section.section_id
+        self._refresh_sections_ui()
+        self.update_timeline()
+
+    def apply_section_editor(self):
+        if self._updating_section_fields:
+            return
+        section = self._selected_section()
+        if section is None:
+            QMessageBox.warning(self, "Warning", "Select a section first")
+            return
+        start_frame = self._seconds_to_frame(self.section_start_spin.value())
+        end_frame = self._seconds_to_frame(self.section_end_spin.value())
+        if start_frame != section.start_frame or end_frame != section.end_frame:
+            self._warn_before_moving_section(section.section_id)
+        self.annotator.update_section(
+            section.section_id,
+            label=self.section_label_edit.text().strip() or f"Section {section.section_id}",
+            group_id=self.section_group_edit.currentText(),
+            start_frame=start_frame,
+            end_frame=end_frame,
+        )
+        self._refresh_sections_ui()
+        self.update_timeline()
+        self.update_info_label()
+        if self.last_frame_np is not None:
+            self.show_frame(self.last_frame_np, store_last=False)
+
+    def delete_selected_section(self):
+        section = self._selected_section()
+        if section is None:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Delete section",
+            f"Delete section {section.section_id}? Existing encoded rows will remain in the CSV.",
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self.annotator.delete_section(section.section_id)
+        self.selected_section_id = None
+        self._refresh_sections_ui()
+        self.update_timeline()
+        self.update_info_label()
+
+    def edit_section_label_inline(self, section_id: int):
+        section = self.annotator.section_by_id(section_id)
+        if section is None:
+            return
+        text, ok = QInputDialog.getText(
+            self,
+            "Section label",
+            "Label",
+            text=section.label,
+        )
+        if ok:
+            self.annotator.update_section(
+                section.section_id,
+                label=text.strip() or f"Section {section.section_id}",
+            )
+            self.selected_section_id = section.section_id
+            self._refresh_sections_ui()
+            self.update_timeline()
+            self.update_info_label()
 
     # ==================================================
     # Frame rendering (with overlay)
     # ==================================================
+    def _apply_preview_effects(self, frame: np.ndarray) -> np.ndarray:
+        alpha = max(0.1, self.preview_contrast / 100.0)
+        beta = int(self.preview_brightness)
+        if alpha == 1.0 and beta == 0:
+            return frame
+        return cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
+
+    def _draw_badge(
+        self,
+        image: np.ndarray,
+        text: str,
+        x: int,
+        y: int,
+        color_hex: str,
+        align_center: bool = False,
+    ):
+        if not text:
+            return
+        color_hex = color_hex if re.match(r"^#[0-9a-fA-F]{6}$", color_hex) else DEFAULT_COLOR
+        color_rgb = (
+            int(color_hex[1:3], 16),
+            int(color_hex[3:5], 16),
+            int(color_hex[5:7], 16),
+        )
+        color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale_text = 0.8
+        thickness = 2
+        (tw, th), _ = cv2.getTextSize(text, font, scale_text, thickness)
+        max_text_w = max(40, image.shape[1] - 36)
+        while tw > max_text_w and scale_text > 0.35:
+            scale_text -= 0.05
+            (tw, th), _ = cv2.getTextSize(text, font, scale_text, thickness)
+        pad = 10
+        if align_center:
+            x = int((image.shape[1] - tw) / 2)
+        x = max(pad, min(image.shape[1] - tw - pad, x))
+        y = max(th + pad, min(image.shape[0] - pad, y))
+        cv2.rectangle(
+            image,
+            (x - pad, y - th - pad),
+            (x + tw + pad, y + pad),
+            color_bgr,
+            -1,
+        )
+        text_color = (255, 255, 255) if sum(color_rgb) < 300 else (0, 0, 0)
+        cv2.putText(image, text, (x, y), font, scale_text, text_color, thickness, cv2.LINE_AA)
+
     def show_frame(self, frame, store_last=True):
         h, w = frame.shape[:2]
         max_w = self.video_label.width()
@@ -849,37 +1297,29 @@ class GazeEncoderApp(QWidget):
 
         new_w, new_h = int(w * scale), int(h * scale)
         resized = cv2.resize(frame, (new_w, new_h))
+        resized = self._apply_preview_effects(resized)
+
+        section = self.annotator.section_at_frame(self.annotator.current_frame)
+        if section is not None:
+            section_label = section.label.strip() or f"Section {section.section_id}"
+            self._draw_badge(
+                resized,
+                f"Section {section.section_id} | {section_label}",
+                18,
+                38,
+                "#62c58f",
+            )
 
         lab = self.annotator.get_label(self.annotator.current_frame)
         if lab is not None:
             mode = lab.get("mode", "")
-            label = lab.get("group", "")
+            label = lab.get("group_ID") or lab.get("group", "")
             frame_txt = self._format_frame_display(
                 self.annotator.current_frame)
             txt = f"{frame_txt} | {mode} | {label}"
 
             color_hex = self.color_for_mode(mode) if mode else DEFAULT_COLOR
-            r = int(color_hex[1:3], 16)
-            g = int(color_hex[3:5], 16)
-            b = int(color_hex[5:7], 16)
-            color_rgb = (r, g, b)
-            color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
-
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            scale_text = 1.0
-            thickness = 2
-            (tw, th), _ = cv2.getTextSize(txt, font, scale_text, thickness)
-
-            pad = 12
-            x = int((new_w - tw) / 2)
-            y = new_h - th - 20
-
-            cv2.rectangle(resized, (x - pad, y - th - pad),
-                          (x + tw + pad, y + pad), color_bgr, -1)
-            text_color = (255, 255, 255) if sum(color_rgb) < 300 else (0, 0, 0)
-
-            cv2.putText(resized, txt, (x, y), font, scale_text,
-                        text_color, thickness, cv2.LINE_AA)
+            self._draw_badge(resized, txt, 18, new_h - 28, color_hex, align_center=True)
 
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         qimg = QImage(rgb.data, new_w, new_h, 3 * new_w,
@@ -894,13 +1334,22 @@ class GazeEncoderApp(QWidget):
     def update_info_label(self):
         if not self.annotator.cap:
             self.info_label.setText("Frame - | unlabeled")
+            self.active_section_status_label.setText("Section: none")
             return
 
         f = self.annotator.current_frame
         lab = self.annotator.get_label(f)
-        label_text = "unlabeled" if lab is None else f"{lab['mode']} | {lab.get('group', '')}"
+        label_text = "unlabeled" if lab is None else f"{lab['mode']} | {lab.get('group_ID') or lab.get('group', '')}"
         frame_txt = self._format_frame_display(f)
         self.info_label.setText(f"Frame {frame_txt} | {label_text}")
+        section = self.annotator.section_at_frame(f)
+        if section is None:
+            self.active_section_status_label.setText("Section: none")
+        else:
+            label = section.label.strip() or f"Section {section.section_id}"
+            self.active_section_status_label.setText(
+                f"Section: {section.section_id} | {label} | {section.group_id}"
+            )
 
     # ==================================================
     # CSV save
@@ -909,8 +1358,114 @@ class GazeEncoderApp(QWidget):
         if not self.annotator.cap:
             QMessageBox.warning(self, "Warning", "No video loaded")
             return
+        self._flush_autosave()
         self.annotator.save_csv()
         QMessageBox.information(self, "Saved", "CSV saved")
+
+    def _schedule_autosave(self):
+        self.autosave_timer.start(1500)
+
+    def _flush_autosave(self):
+        if self.autosave_timer.isActive():
+            self.autosave_timer.stop()
+        if self.annotator.dirty:
+            self.annotator.save_csv()
+
+    def _set_annotation(self, frame: int, mode: str, group: str):
+        section = self.annotator.section_at_frame(frame)
+        self.annotator.set_label(frame, mode, group, section, autosave=False)
+        self._schedule_autosave()
+
+    def export_calculated_csv(self):
+        if not self.annotator.cap:
+            QMessageBox.warning(self, "Warning", "No video loaded")
+            return
+        self._flush_autosave()
+        base, _ = os.path.splitext(self.annotator.path or "labels")
+        default_path = base + "_calculated.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Calculated CSV",
+            default_path,
+            "CSV Files (*.csv)",
+        )
+        if not path:
+            return
+        self.annotator.export_calculated_csv(path)
+        QMessageBox.information(self, "Saved", f"Calculated CSV exported:\n{path}")
+
+    def _safe_filename(self, text: str) -> str:
+        text = re.sub(r"[^A-Za-z0-9._-]+", "_", text.strip())
+        return text.strip("_") or "section"
+
+    def export_selected_section_video(self):
+        if not self.annotator.cap or not self.annotator.path:
+            QMessageBox.warning(self, "Warning", "No video loaded")
+            return
+        section = self._selected_section() or self.annotator.section_at_frame(self.annotator.current_frame)
+        if section is None:
+            QMessageBox.warning(self, "Warning", "Select a section first")
+            return
+        self.selected_section_id = section.section_id
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            QMessageBox.warning(
+                self,
+                "FFmpeg not found",
+                "Install FFmpeg to export selected sections without re-encoding.",
+            )
+            return
+        output_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Choose Export Folder",
+            os.path.dirname(self.annotator.path),
+        )
+        if not output_dir:
+            return
+
+        base_name = os.path.splitext(os.path.basename(self.annotator.path))[0]
+        label = self._safe_filename(section.label or f"section_{section.section_id}")
+        output_path = os.path.join(
+            output_dir,
+            f"{base_name}_section-{section.section_id:03d}_{label}.mp4",
+        )
+        start_seconds = section.start_frame / max(self.annotator.fps, 1.0)
+        end_seconds = (section.end_frame + 1) / max(self.annotator.fps, 1.0)
+        command = [
+            ffmpeg,
+            "-y",
+            "-ss",
+            f"{start_seconds:.6f}",
+            "-to",
+            f"{end_seconds:.6f}",
+            "-i",
+            self.annotator.path,
+            "-map",
+            "0",
+            "-c",
+            "copy",
+            "-avoid_negative_ts",
+            "make_zero",
+            output_path,
+        ]
+        try:
+            subprocess.run(command, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            QMessageBox.warning(
+                self,
+                "Export failed",
+                exc.stderr[-1200:] if exc.stderr else "FFmpeg export failed.",
+            )
+            return
+        QMessageBox.information(self, "Exported", f"Video exported:\n{output_path}")
+
+    def _on_preview_effect_changed(self, _value=None):
+        self.preview_brightness = self.brightness_slider.value()
+        self.preview_contrast = self.contrast_slider.value()
+        self.brightness_value_label.setText(str(self.preview_brightness))
+        self.contrast_value_label.setText(f"{self.preview_contrast}%")
+        if self.last_frame_np is not None:
+            self.show_frame(self.last_frame_np, store_last=False)
 
     # ==================================================
     # Frame navigation + seek bar
@@ -922,17 +1477,21 @@ class GazeEncoderApp(QWidget):
         if do_label and self.active_label_char is not None:
             info = self.label_map.get(self.active_label_char)
             if info:
-                self.annotator.set_label(
-                    idx, info["mode"], info.get("group", ""))
+                self._set_annotation(idx, info["mode"], info.get("group", ""))
                 self.update_timeline()
                 self.refresh_help_label()
 
         self.annotator.current_frame = idx
         self.show_frame(frame)
-        self.seek_slider.setValue(idx)
+        self._set_seek_slider_value(idx)
         self.update_info_label()
         self.update_waveform()
         self._scroll_to_frame(idx)
+
+    def _set_seek_slider_value(self, idx: int):
+        previous = self.seek_slider.blockSignals(True)
+        self.seek_slider.setValue(idx)
+        self.seek_slider.blockSignals(previous)
 
     def prev_frame(self):
         idx = max(0, self.annotator.current_frame - self.backward_num_frames)
@@ -967,10 +1526,18 @@ class GazeEncoderApp(QWidget):
             return
 
         self.show_frame(frame)
-        self.seek_slider.setValue(self.annotator.current_frame)
+        self._set_seek_slider_value(self.annotator.current_frame)
         self.update_info_label()
         self.update_waveform()
         self._scroll_to_frame(self.annotator.current_frame)
+
+    def _next_encoding_frame_after(self, frame_idx: int) -> int:
+        section = self.annotator.section_at_frame(frame_idx)
+        if section and frame_idx >= section.end_frame:
+            next_section = self.annotator.next_section_after(section.end_frame)
+            if next_section:
+                return next_section.start_frame
+        return min(self.annotator.frame_count - 1, frame_idx + 1)
 
     # ==================================================
     # Labeling (key)
@@ -1028,7 +1595,7 @@ class GazeEncoderApp(QWidget):
             if self.encoding_mode == "scroll":
                 info = self.label_map.get(self.active_label_char)
                 if info:
-                    self.annotator.set_label(
+                    self._set_annotation(
                         self.annotator.current_frame, info["mode"], info.get("group", ""))
                     self.update_info_label()
                     self.update_timeline()
@@ -1038,12 +1605,11 @@ class GazeEncoderApp(QWidget):
             if not self.is_long_press:
                 info = self.label_map.get(self.active_label_char)
                 if info:
-                    self.annotator.set_label(
+                    self._set_annotation(
                         self.annotator.current_frame, info["mode"], info.get("group", ""))
                     self.update_timeline()
                     self.refresh_help_label()
-                    next_idx = min(self.annotator.frame_count - 1,
-                                   self.annotator.current_frame + 1)
+                    next_idx = self._next_encoding_frame_after(self.annotator.current_frame)
                     self.goto_frame(next_idx, do_label=False)
 
     def start_continuous_labeling(self):
@@ -1060,12 +1626,12 @@ class GazeEncoderApp(QWidget):
             return
         info = self.label_map.get(self.active_label_char)
         if info:
-            self.annotator.set_label(
+            self._set_annotation(
                 self.annotator.current_frame, info["mode"], info.get("group", ""))
             self.update_timeline()
             self.refresh_help_label()
 
-        next_idx = self.annotator.current_frame + 1
+        next_idx = self._next_encoding_frame_after(self.annotator.current_frame)
         if next_idx >= self.annotator.frame_count:
             self.label_timer.stop()
             return
@@ -1116,7 +1682,9 @@ class GazeEncoderApp(QWidget):
     # Save on exit
     # ==================================================
     def closeEvent(self, event):
-        self.annotator.save_csv()
+        self._flush_autosave()
+        if self.annotator.sections_dirty:
+            self.annotator.save_sections()
         super().closeEvent(event)
 
     # ==================================================
@@ -1150,14 +1718,18 @@ class GazeEncoderApp(QWidget):
             return
 
         same_mode = prev_label["mode"] == next_label["mode"]
-        same_group = prev_label.get("group", "") == next_label.get("group", "")
+        same_group = (
+            prev_label.get("group_ID") or prev_label.get("group", "")
+        ) == (
+            next_label.get("group_ID") or next_label.get("group", "")
+        )
         if not (same_mode and same_group):
             QMessageBox.warning(
                 self, "Warning", "When using Fillin, labels before and after the cursor must match")
             return
 
         fill_mode = prev_label["mode"]
-        fill_group = prev_label.get("group", "")
+        fill_group = prev_label.get("group_ID") or prev_label.get("group", "")
 
         filled = 0
         for idx in range(prev_idx + 1, next_idx):
@@ -1165,6 +1737,9 @@ class GazeEncoderApp(QWidget):
                 self.annotator.annotations[idx] = {
                     "mode": fill_mode,
                     "group": fill_group,
+                    "group_ID": fill_group,
+                    "section_ID": prev_label.get("section_ID", ""),
+                    "section_label": prev_label.get("section_label", ""),
                 }
                 filled += 1
 

@@ -43,9 +43,15 @@
     "wheel_fast_multiplier": 5
   },
 
+  "groups": ["test", "habi"],
+
+  "sections": {
+    "default_duration_seconds": 10
+  },
+
   "timings": {
     "forward_num_frames": 1,
-    "backward_num_frames": 5,
+    "backward_num_frames": 2,
     "label_delay_ms": 10,
     "long_press_threshold_ms": 1500,
     "auto_label_interval_ms": 33,
