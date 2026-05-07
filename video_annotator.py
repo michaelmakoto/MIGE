@@ -136,6 +136,7 @@ class VideoAnnotatorCore:
     def save_csv(self):
         if not self.path:
             return
+        self.sync_annotation_sections()
         csv_path = self.derive_csv_path()
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
@@ -145,8 +146,8 @@ class VideoAnnotatorCore:
             writer.writeheader()
             for frame in sorted(self.annotations.keys()):
                 ann = self.annotations[frame]
-                section = self.section_by_id(ann.get("section_ID"))
-                section_id = ann.get("section_ID")
+                section = self._annotation_section(frame, ann)
+                section_id = section.section_id if section else ann.get("section_ID")
                 section_label = section.label if section else ann.get("section_label", "")
                 group_id = ann.get("group_ID") or ann.get("group", "")
                 if section and section.group_id:
@@ -217,6 +218,38 @@ class VideoAnnotatorCore:
         clean = str(label or "").strip()
         return not clean or re.fullmatch(r"Section\s+\d+", clean) is not None
 
+    def _annotation_section(self, frame: int, ann: dict) -> VideoSection | None:
+        section = self.section_by_id(ann.get("section_ID"))
+        if section is not None:
+            return section
+        return self.section_at_frame(frame)
+
+    def sync_annotation_sections(self) -> bool:
+        changed = False
+        for frame, ann in self.annotations.items():
+            section = self._annotation_section(frame, ann)
+            if section is None:
+                continue
+
+            if self._parse_int(ann.get("section_ID")) != section.section_id:
+                ann["section_ID"] = section.section_id
+                changed = True
+            if ann.get("section_label", "") != section.label:
+                ann["section_label"] = section.label
+                changed = True
+
+            group_id = section.group_id or ann.get("group_ID") or ann.get("group", "")
+            if group_id and ann.get("group_ID", "") != group_id:
+                ann["group_ID"] = group_id
+                changed = True
+            if group_id and ann.get("group", "") != group_id:
+                ann["group"] = group_id
+                changed = True
+
+        if changed:
+            self.dirty = True
+        return changed
+
     def _renumber_sections_by_start(self):
         old_to_new: dict[int, int] = {}
         self.sections.sort(
@@ -268,6 +301,7 @@ class VideoAnnotatorCore:
         )
         self.sections.append(section)
         self._renumber_sections_by_start()
+        self.sync_annotation_sections()
         self.sections_dirty = True
         self.save_sections()
         return section
@@ -295,6 +329,7 @@ class VideoAnnotatorCore:
         if section.end_frame < section.start_frame:
             section.start_frame, section.end_frame = section.end_frame, section.start_frame
         self._renumber_sections_by_start()
+        self.sync_annotation_sections()
         self.sections_dirty = True
         self.save_sections()
         return section
@@ -322,6 +357,7 @@ class VideoAnnotatorCore:
                 self.dirty = True
         self.sections = [section for section in self.sections if section.section_id != section_id]
         self._renumber_sections_by_start()
+        self.sync_annotation_sections()
         self.sections_dirty = True
         self.save_sections()
 
@@ -361,13 +397,14 @@ class VideoAnnotatorCore:
         )
 
     def export_calculated_csv(self, csv_path: str):
+        self.sync_annotation_sections()
         rows: dict[tuple, int] = {}
         for frame, ann in self.annotations.items():
             mode = ann.get("mode")
             if not mode:
                 continue
-            section = self.section_by_id(ann.get("section_ID"))
-            section_id = ann.get("section_ID")
+            section = self._annotation_section(frame, ann)
+            section_id = section.section_id if section else ann.get("section_ID")
             section_label = section.label if section else ann.get("section_label", "")
             group_id = ann.get("group_ID") or ann.get("group", "")
             if section:

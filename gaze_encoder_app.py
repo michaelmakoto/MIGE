@@ -285,9 +285,7 @@ class GazeEncoderApp(QWidget):
         self.change_section_labels_button.clicked.connect(self.choose_section_labels_json)
         self.apply_section_labels_button = QPushButton("Apply")
         self.apply_section_labels_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.apply_section_labels_button.clicked.connect(
-            lambda: self.apply_section_label_presets(prompt_on_conflict=True, force_prompt=True)
-        )
+        self.apply_section_labels_button.clicked.connect(self.reload_and_apply_section_label_presets)
         section_label_buttons.addWidget(self.change_section_labels_button)
         section_label_buttons.addWidget(self.apply_section_labels_button)
 
@@ -751,6 +749,10 @@ class GazeEncoderApp(QWidget):
         self.load_section_label_presets()
         self.apply_section_label_presets(prompt_on_conflict=True, force_prompt=True)
 
+    def reload_and_apply_section_label_presets(self):
+        self.load_section_label_presets()
+        self.apply_section_label_presets(prompt_on_conflict=True, force_prompt=True)
+
     def _is_auto_section_label(self, label: str) -> bool:
         clean = str(label or "").strip()
         return not clean or re.fullmatch(r"Section\s+\d+", clean) is not None
@@ -852,10 +854,13 @@ class GazeEncoderApp(QWidget):
                         ann["group_ID"] = section.group_id
                         ann["group"] = section.group_id
 
+        annotations_changed = self.annotator.sync_annotation_sections()
+
         if changed:
             self.annotator.sections_dirty = True
-            self.annotator.dirty = True
             self.annotator.save_sections()
+        if changed or annotations_changed:
+            self.annotator.dirty = True
             self._schedule_autosave()
             self._refresh_sections_ui()
             self.update_timeline()
