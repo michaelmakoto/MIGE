@@ -576,7 +576,7 @@ class GazeEncoderApp(QWidget):
             self.timeline_label, self.tick_label)
 
         self.waveform_label = SeekableWaveformWidget()
-        self.waveform_label.frameRequested.connect(self.goto_frame)
+        self.waveform_label.frameRequested.connect(self.goto_waveform_frame)
         self.waveform_label.setMinimumHeight(60)
         self.waveform_label.setMaximumHeight(60)
         self.waveform_label.setSizePolicy(
@@ -1951,7 +1951,10 @@ class GazeEncoderApp(QWidget):
     # ==================================================
     # Frame navigation + seek bar
     # ==================================================
-    def goto_frame(self, idx, do_label=False):
+    def goto_waveform_frame(self, idx: int):
+        self.goto_frame(idx, center_on_frame=False)
+
+    def goto_frame(self, idx, do_label=False, center_on_frame=True):
         frame = self.annotator.get_frame(idx)
         if frame is None:
             return
@@ -1959,7 +1962,6 @@ class GazeEncoderApp(QWidget):
             info = self.label_map.get(self.active_label_char)
             if info:
                 self._set_annotation(idx, info["mode"], info.get("group", ""))
-                self.update_timeline()
                 self.refresh_help_label()
 
         self.annotator.current_frame = idx
@@ -1967,7 +1969,9 @@ class GazeEncoderApp(QWidget):
         self._set_seek_slider_value(idx)
         self.update_info_label()
         self.update_waveform()
-        self._scroll_to_frame(idx)
+        self.update_timeline()
+        if center_on_frame:
+            self._scroll_to_frame(idx)
 
     def _set_seek_slider_value(self, idx: int):
         previous = self.seek_slider.blockSignals(True)
@@ -2010,6 +2014,7 @@ class GazeEncoderApp(QWidget):
         self._set_seek_slider_value(self.annotator.current_frame)
         self.update_info_label()
         self.update_waveform()
+        self.update_timeline()
         self._scroll_to_frame(self.annotator.current_frame)
 
     def _next_encoding_frame_after(self, frame_idx: int) -> int:

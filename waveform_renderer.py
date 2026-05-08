@@ -72,12 +72,9 @@ class WaveformRenderer:
         # Copy static and draw cursor — fast path for every frame tick.
         pix = QPixmap(self._static_pixmap)
 
-        if self.samples is not None and self.frame_count > 0 and len(self.samples) > 0:
-            total = len(self.samples)
-            # Convert frame → sample → pixel using the same mapping as the waveform.
-            sample_pos = int(current_frame / max(1.0, self.fps) * self.sample_rate)
-            sample_pos = max(0, min(sample_pos, total - 1))
-            cx = int(sample_pos / total * (w - 1))
+        if self.samples is not None and self.frame_count > 1 and len(self.samples) > 0:
+            frame = max(0, min(int(current_frame), self.frame_count - 1))
+            cx = int(frame / (self.frame_count - 1) * (w - 1))
 
             painter = QPainter(pix)
             painter.setPen(QPen(QColor("#ffffff"), 1))
