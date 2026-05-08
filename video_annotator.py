@@ -272,6 +272,73 @@ class VideoAnnotatorCore:
         self.save_sections()
         return section
 
+    def replace_sections(self, section_specs: list[dict], reassign_annotations: bool = True):
+        normalized = []
+        for index, spec in enumerate(section_specs):
+            start_frame = self._parse_int(spec.get("start_frame"))
+            end_frame = self._parse_int(spec.get("end_frame"))
+            if start_frame is None or end_frame is None:
+                continue
+            start_frame = self._clamp_frame(start_frame)
+            end_frame = self._clamp_frame(end_frame)
+            if end_frame < start_frame:
+                start_frame, end_frame = end_frame, start_frame
+            normalized.append(
+                {
+                    "sort_index": index,
+                    "start_frame": start_frame,
+                    "end_frame": end_frame,
+                    "label": str(spec.get("label", "")).strip(),
+                    "group_id": str(spec.get("group_id", "")).strip(),
+                }
+            )
+
+        normalized.sort(
+            key=lambda item: (
+                item["start_frame"],
+                item["end_frame"],
+                item["sort_index"],
+            )
+        )
+
+        self.sections = []
+        for section_id, item in enumerate(normalized, start=1):
+            label = item["label"] or f"Section {section_id}"
+            self.sections.append(
+                VideoSection(
+                    section_id=section_id,
+                    label=label,
+                    group_id=item["group_id"],
+                    start_frame=item["start_frame"],
+                    end_frame=item["end_frame"],
+                )
+            )
+
+        self.sections_dirty = True
+        if reassign_annotations:
+            self._reassign_annotation_sections()
+        self.save_sections()
+
+    def _reassign_annotation_sections(self):
+        changed = False
+        for frame, ann in self.annotations.items():
+            section = self.section_at_frame(frame)
+            new_section_id = section.section_id if section else ""
+            new_section_label = section.label if section else ""
+            if ann.get("section_ID") != new_section_id:
+                ann["section_ID"] = new_section_id
+                changed = True
+            if ann.get("section_label", "") != new_section_label:
+                ann["section_label"] = new_section_label
+                changed = True
+            if section and section.group_id:
+                if ann.get("group_ID") != section.group_id:
+                    ann["group_ID"] = section.group_id
+                    ann["group"] = section.group_id
+                    changed = True
+        if changed:
+            self.dirty = True
+
     def update_section(
         self,
         section_id: int,

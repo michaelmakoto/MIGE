@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -35,6 +36,11 @@ from PyQt6.QtWidgets import (
 )
 
 from flexible_label import FlexibleLabel
+from experiment_csv_import_dialog import (
+    ExperimentCsvDropLabel,
+    ExperimentCsvImportDialog,
+    ExperimentCsvSection,
+)
 from seekable_waveform_widget import SeekableWaveformWidget
 from section_timeline_widget import SectionTimelineWidget
 from settings_dialog import SettingsDialog
@@ -266,6 +272,26 @@ class GazeEncoderApp(QWidget):
         self.add_video_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.add_video_button.clicked.connect(self.select_video)
 
+        experiment_csv_box = QGroupBox("Read Experiment CSV File")
+        experiment_csv_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        experiment_csv_layout = QVBoxLayout()
+        experiment_csv_layout.setContentsMargins(10, 10, 10, 10)
+        experiment_csv_layout.setSpacing(8)
+
+        self.experiment_csv_path_label = QLabel("No CSV loaded")
+        self.experiment_csv_path_label.setWordWrap(True)
+        self.experiment_csv_drop_label = ExperimentCsvDropLabel("Drop CSV here")
+        self.experiment_csv_drop_label.csvDropped.connect(self.load_experiment_csv)
+
+        self.add_experiment_csv_button = QPushButton("+ Add CSV")
+        self.add_experiment_csv_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.add_experiment_csv_button.clicked.connect(self.choose_experiment_csv)
+
+        experiment_csv_layout.addWidget(self.experiment_csv_path_label)
+        experiment_csv_layout.addWidget(self.experiment_csv_drop_label)
+        experiment_csv_layout.addWidget(self.add_experiment_csv_button)
+        experiment_csv_box.setLayout(experiment_csv_layout)
+
         section_labels_box = QGroupBox("Section Labels")
         section_labels_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         section_labels_layout = QVBoxLayout()
@@ -330,6 +356,7 @@ class GazeEncoderApp(QWidget):
         browser_layout.addWidget(browser_title)
         browser_layout.addWidget(self.add_video_button)
         browser_layout.addWidget(self.video_list_widget)
+        browser_layout.addWidget(experiment_csv_box)
         browser_layout.addWidget(section_labels_box)
         browser_layout.addWidget(settings_box)
 
@@ -1209,6 +1236,112 @@ class GazeEncoderApp(QWidget):
                 self.load_video(self.video_list[row])
 
     # ==================================================
+    # Experiment CSV import
+    # ==================================================
+    def choose_experiment_csv(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Read Experiment CSV File",
+            "",
+            "CSV Files (*.csv)",
+        )
+        if path:
+            self.load_experiment_csv(path)
+
+    def load_experiment_csv(self, path: str):
+        if not self.annotator.cap:
+            QMessageBox.warning(self, "Experiment CSV", "Load a video first")
+            return
+        if os.path.splitext(path)[1].lower() != ".csv":
+            QMessageBox.warning(self, "Experiment CSV", "Choose a CSV file")
+            return
+
+        try:
+            dialog = ExperimentCsvImportDialog(
+                path,
+                self._frame_to_seconds(self.annotator.current_frame),
+                self,
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Experiment CSV", f"Could not read CSV:\n{exc}")
+            return
+
+        if dialog.exec() == 0:
+            return
+
+        section_specs, skipped = self._build_experiment_section_specs(
+            dialog.imported_sections
+        )
+        if not section_specs:
+            QMessageBox.warning(
+                self,
+                "Experiment CSV",
+                "No selected CSV rows fit inside the current video timeline.",
+            )
+            return
+
+        existing_count = len(self.annotator.sections)
+        skipped_text = f"\n\nSkipped {skipped} rows outside the video timeline." if skipped else ""
+        reply = QMessageBox.question(
+            self,
+            "Replace Sections",
+            f"Replace the current {existing_count} timeline sections with "
+            f"{len(section_specs)} imported sections?\n\n"
+            "Existing encoded rows will stay on their frames. Their section_ID and "
+            "section_label values will be recalculated from the imported sections."
+            f"{skipped_text}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self.annotator.replace_sections(section_specs, reassign_annotations=True)
+        if self.annotator.dirty:
+            self.annotator.save_csv()
+        self.selected_section_id = (
+            self.annotator.sections[0].section_id if self.annotator.sections else None
+        )
+        self.experiment_csv_path_label.setText(
+            f"{os.path.basename(path)} ({len(section_specs)} sections)"
+        )
+        self.apply_section_label_presets(prompt_on_conflict=False)
+        self._refresh_sections_ui()
+        self.update_timeline()
+        self.update_info_label()
+        if self.last_frame_np is not None:
+            self.show_frame(self.last_frame_np, store_last=False)
+
+    def _build_experiment_section_specs(
+        self, imported_sections: list[ExperimentCsvSection]
+    ) -> tuple[list[dict], int]:
+        fps = max(self.annotator.fps, 1.0)
+        max_frame = max(0, self.annotator.frame_count - 1)
+        specs: list[dict] = []
+        skipped = 0
+
+        for section in imported_sections:
+            start_frame = int(math.floor(section.start_seconds * fps))
+            end_frame = int(math.ceil(section.end_seconds * fps)) - 1
+            if end_frame < start_frame:
+                end_frame = start_frame
+            if end_frame < 0 or start_frame > max_frame:
+                skipped += 1
+                continue
+            start_frame = max(0, min(max_frame, start_frame))
+            end_frame = max(0, min(max_frame, end_frame))
+            specs.append(
+                {
+                    "label": section.label,
+                    "group_id": "",
+                    "start_frame": start_frame,
+                    "end_frame": end_frame,
+                }
+            )
+
+        return specs, skipped
+
+    # ==================================================
     # Zoom
     # ==================================================
     def _on_zoom_changed(self, value: int):
@@ -2026,6 +2159,8 @@ class GazeEncoderApp(QWidget):
             ext = os.path.splitext(path)[1].lower()
             if ext in {".mp4", ".avi", ".mov", ".mkv"}:
                 self.load_video(path)
+            elif ext == ".csv":
+                self.load_experiment_csv(path)
 
     # ==================================================
     # Save on exit
