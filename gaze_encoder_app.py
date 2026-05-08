@@ -624,6 +624,7 @@ class GazeEncoderApp(QWidget):
         zoom_col.addWidget(self._zoom_level_label)
 
         self._zoomable_content = QWidget()
+        self._zoomable_content.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         zoomable_layout = QVBoxLayout()
         zoomable_layout.setContentsMargins(0, 0, 0, 0)
         zoomable_layout.setSpacing(4)
@@ -640,6 +641,7 @@ class GazeEncoderApp(QWidget):
         self._zoom_scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._zoom_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._zoom_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         timeline_row = QHBoxLayout()
         timeline_row.setContentsMargins(0, 0, 0, 0)
@@ -1953,6 +1955,7 @@ class GazeEncoderApp(QWidget):
     # ==================================================
     def goto_waveform_frame(self, idx: int):
         self.goto_frame(idx, center_on_frame=False)
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
 
     def goto_frame(self, idx, do_label=False, center_on_frame=True):
         frame = self.annotator.get_frame(idx)
