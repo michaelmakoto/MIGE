@@ -32,6 +32,7 @@ You can use it for workflows like:
 - Waveform view: shows the audio waveform and lets you click or drag to move the playhead.
 - Timeline sections: create highlighted sections, move them, resize them, and label them.
 - Section labels: load preset section names from a JSON file such as `sections_settings.json`.
+- Experiment CSV import: read PsychoPy-style CSV files and create timeline sections from event onset/offset times.
 - Keyboard coding: press label keys to code the current frame.
 - Section start/end shortcuts: press `1` to set the start point and `2` to set the end point.
 - Normal playback: press `Space` to play or pause the video.
@@ -174,6 +175,8 @@ Windows users can install FFmpeg from the official FFmpeg website or with a pack
 6. Use the keyboard to code frames.
 7. Export the CSV when finished.
 
+If your experiment software already saved stimulus timing, you can also use `Read Experiment CSV File` on the left side to create timeline sections automatically.
+
 ### Creating Sections
 
 You can create sections in several ways:
@@ -186,6 +189,28 @@ You can create sections in several ways:
 If the playhead is inside an existing section, `1` or `2` updates that section. If the playhead is outside all sections, MIGE creates a new section.
 
 New sections use the default duration from the settings. The default is 10 seconds.
+
+### Importing Sections from an Experiment CSV
+
+The left side has a `Read Experiment CSV File` area between the video browser and `Section Labels`.
+
+Use it when a PsychoPy or experiment CSV already contains stimulus timing. The CSV should include at least these columns:
+
+```text
+phase,event,onset,offset,duration
+```
+
+When a CSV is loaded, MIGE opens a preview dialog.
+
+- Rows where `phase` is `stimulus` are selected automatically.
+- You can check or uncheck rows before importing.
+- You can choose which columns to use for the section name, start time, and end time.
+- By default, `event` is used as the section name/identifier, `onset` is used as the start time, and `offset` is used as the end time.
+- The table uses a dark background with alternating text colors for readability.
+
+CSV timing must be aligned to the video timeline. Before loading the CSV, move the playhead to the timeline point that should match CSV time 0, or edit `CSV time 0 in timeline` in the preview dialog.
+
+After you confirm the preview, MIGE asks whether it is OK to replace the current timeline sections. If you continue, the imported rows replace the current sections. Existing frame-level coding stays on the same frames, but `section_ID` and `section_label` values are recalculated from the new sections.
 
 ### Moving Sections
 
@@ -287,6 +312,7 @@ MIGEは、動画を見ながら視線や行動を手動でコーディングす�
 - 波形表示: 音声の波形を表示し、クリックやドラッグで再生位置を移動できます。
 - タイムラインのセクション: 区間を作成、移動、リサイズ、ラベル付けできます。
 - セクションラベル: `sections_settings.json` などのJSONファイルから、セクション名を読み込めます。
+- 実験CSV読み込み: PsychoPyなどのCSVに保存された刺激の開始・終了時刻から、タイムラインのセクションを自動作成できます。
 - キーボード入力: キーを押して現在のフレームにラベルを付けます。
 - セクション開始・終了ショートカット: `1` で開始位置、`2` で終了位置を設定します。
 - 通常再生: `Space` で動画を再生・停止できます。
@@ -427,6 +453,8 @@ Windowsの場合は、FFmpeg公式サイトまたはパッケージ管理ツー�
 6. キーボードでフレームごとにラベルを入力します。
 7. 作業が終わったらCSVを書き出します。
 
+実験ソフトで刺激のタイミングを保存している場合は、左側の `Read Experiment CSV File` からタイムラインのセクションを自動作成できます。
+
 ### セクションを作る
 
 セクションは次の方法で作れます。
@@ -439,6 +467,28 @@ Windowsの場合は、FFmpeg公式サイトまたはパッケージ管理ツー�
 再生位置が既存のセクション内にある場合、`1` と `2` はそのセクションを編集します。再生位置がどのセクションにも入っていない場合は、新しいセクションを作ります。
 
 新しいセクションの長さは設定で変更できます。初期設定は10秒です。
+
+### 実験CSVからセクションを読み込む
+
+左側の動画ブラウザと `Section Labels` の間に、`Read Experiment CSV File` があります。
+
+PsychoPyなどの実験CSVに刺激のタイミングが保存されている場合、この機能でセクションを自動作成できます。CSVには少なくとも次の列が必要です。
+
+```text
+phase,event,onset,offset,duration
+```
+
+CSVを読み込むと、確認用のダイアログが開きます。
+
+- `phase` が `stimulus` の行が自動で選択されます。
+- 読み込む行は、チェックを付けたり外したりして変更できます。
+- セクション名、開始時刻、終了時刻に使う列を選べます。
+- 初期設定では、`event` をセクション名・識別名、`onset` を開始時刻、`offset` を終了時刻として使います。
+- 表は見やすいように暗い背景と交互の文字色で表示されます。
+
+CSVの時刻は、動画のタイムラインに合わせる必要があります。CSVを読み込む前に、CSVの0秒に対応する動画上の位置へ再生位置を移動するか、確認ダイアログの `CSV time 0 in timeline` を編集してください。
+
+プレビューを確認したあと、現在のタイムラインセクションを置き換えてよいか確認されます。続行すると、読み込んだ行が現在のセクションを置き換えます。すでに入力したフレームごとのデータは同じフレームに残りますが、`section_ID` と `section_label` は新しいセクションに合わせて再計算されます。
 
 ### セクションを動かす
 
