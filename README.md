@@ -29,12 +29,13 @@ You can use it for workflows like:
 
 - Video browser: shows the videos in the same folder, so you can move between videos easily.
 - Video preview: shows the current frame and the active section name in the top-left corner.
-- Waveform view: shows the audio waveform and lets you click or drag to move the playhead.
+- Waveform view: shows the audio waveform and lets you click or drag to move the playhead. When zoomed in, clicking the waveform moves the cursor to that precise point without immediately re-centering the view.
 - Timeline sections: create highlighted sections, move them, resize them, and label them.
 - Section labels: load preset section names from a JSON file such as `sections_settings.json`.
 - Experiment CSV import: read PsychoPy-style CSV files and create timeline sections from event onset/offset times.
 - Keyboard coding: press label keys to code the current frame.
 - Section start/end shortcuts: press `1` to set the start point and `2` to set the end point.
+- Section navigation shortcuts: press `Tab` to select the next section and `Shift+Tab` to select the previous section.
 - Normal playback: press `Space` to play or pause the video.
 - Auto section jump: during coding, MIGE can jump to the next section after finishing the current one.
 - Preview effects: adjust brightness and contrast for easier viewing. These changes are for preview only.
@@ -190,6 +191,12 @@ If the playhead is inside an existing section, `1` or `2` updates that section. 
 
 New sections use the default duration from the settings. The default is 10 seconds.
 
+### Navigating the Timeline
+
+When the waveform is zoomed in, click or drag on the waveform to move the playhead to the exact visible point. The view stays where you clicked so you can make precise selections. After that, `Left` and `Right` still move to the previous or next frame and center the cursor in the zoomed timeline view.
+
+Use `Tab` to select the next section in the section list. Use `Shift+Tab` to select the previous section. Selecting a section this way behaves like selecting it in the right-side section list: MIGE selects the section and jumps to its start frame.
+
 ### Importing Sections from an Experiment CSV
 
 The left side has a `Read Experiment CSV File` area between the video browser and `Section Labels`.
@@ -261,9 +268,11 @@ X            = fill an unlabeled gap
 T            = switch frame/time display
 1            = set section start
 2            = set section end
+Tab          = select next section
+Shift+Tab    = select previous section
 ```
 
-You can change these in the Settings window.
+You can change these in the Settings window. The same shortcuts are stored in `encode_settings.json` under `app_keys`, where `tab` maps to `next_section` and `shift+tab` maps to `prev_section` by default.
 
 ### Exports
 
@@ -309,12 +318,13 @@ MIGEは、動画を見ながら視線や行動を手動でコーディングす�
 
 - 動画ブラウザ: 同じフォルダ内の動画を左側に表示します。
 - 動画プレビュー: 現在のフレームと、現在のセクション名を左上に表示します。
-- 波形表示: 音声の波形を表示し、クリックやドラッグで再生位置を移動できます。
+- 波形表示: 音声の波形を表示し、クリックやドラッグで再生位置を移動できます。拡大表示中は、クリックした波形上の正確な位置へカーソルを移動し、すぐには表示を中央へ戻しません。
 - タイムラインのセクション: 区間を作成、移動、リサイズ、ラベル付けできます。
 - セクションラベル: `sections_settings.json` などのJSONファイルから、セクション名を読み込めます。
 - 実験CSV読み込み: PsychoPyなどのCSVに保存された刺激の開始・終了時刻から、タイムラインのセクションを自動作成できます。
 - キーボード入力: キーを押して現在のフレームにラベルを付けます。
 - セクション開始・終了ショートカット: `1` で開始位置、`2` で終了位置を設定します。
+- セクション移動ショートカット: `Tab` で次のセクション、`Shift+Tab` で前のセクションを選択します。
 - 通常再生: `Space` で動画を再生・停止できます。
 - 自動セクション移動: コーディング中に現在のセクションが終わると、次のセクションへ移動できます。
 - プレビュー調整: 明るさとコントラストを調整できます。これは見やすくするためだけで、書き出し動画には反映されません。
@@ -468,6 +478,12 @@ Windowsの場合は、FFmpeg公式サイトまたはパッケージ管理ツー�
 
 新しいセクションの長さは設定で変更できます。初期設定は10秒です。
 
+### タイムライン内を移動する
+
+波形を拡大しているときは、波形上をクリックまたはドラッグすると、見えているその正確な位置へ再生位置を移動できます。クリック直後に表示は中央へ移動しないため、細かい位置を選びやすくなっています。その後で `Left` / `Right` を押すと、前後のフレームへ移動し、拡大タイムライン上でカーソルが中央に来ます。
+
+`Tab` を押すと、右側のセクション一覧で次のセクションを選択した場合と同じように、次のセクションを選択して開始フレームへ移動します。`Shift+Tab` では前のセクションを選択して開始フレームへ移動します。
+
 ### 実験CSVからセクションを読み込む
 
 左側の動画ブラウザと `Section Labels` の間に、`Read Experiment CSV File` があります。
@@ -537,9 +553,11 @@ X            = ラベルなし区間の補完
 T            = フレーム表示 / 時間表示の切り替え
 1            = セクション開始位置を設定
 2            = セクション終了位置を設定
+Tab          = 次のセクションを選択
+Shift+Tab    = 前のセクションを選択
 ```
 
-これらは設定画面で変更できます。
+これらは設定画面で変更できます。同じショートカットは `encode_settings.json` の `app_keys` にも保存されています。初期設定では、`tab` が `next_section`、`shift+tab` が `prev_section` に対応しています。
 
 ### 書き出し
 

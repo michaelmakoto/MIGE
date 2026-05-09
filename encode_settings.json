@@ -36,7 +36,9 @@
     "m": "toggle_mode",
     "t": "toggle_display_format",
     "1": "set_section_start",
-    "2": "set_section_end"
+    "2": "set_section_end",
+    "tab": "next_section",
+    "shift+tab": "prev_section"
   },
   "mouse": {
     "wheel_step": 1,

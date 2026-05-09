@@ -8,7 +8,7 @@ import subprocess
 import cv2
 import numpy as np
 
-from PyQt6.QtCore import QBuffer, QByteArray, QIODeviceBase, QTimer, Qt
+from PyQt6.QtCore import QBuffer, QByteArray, QEvent, QIODeviceBase, QTimer, Qt
 from PyQt6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PyQt6.QtMultimedia import QAudioFormat, QAudioSink
 from PyQt6.QtWidgets import (
@@ -991,6 +991,8 @@ class GazeEncoderApp(QWidget):
             "up": Qt.Key.Key_Up,
             "down": Qt.Key.Key_Down,
             "space": Qt.Key.Key_Space,
+            "tab": Qt.Key.Key_Tab,
+            "shift+tab": Qt.Key.Key_Backtab,
         }
         for token in all_tokens:
             lower = token.lower()
@@ -1120,6 +1122,14 @@ class GazeEncoderApp(QWidget):
         self.help_label.setText(self._build_help_text())
 
     def _token_from_event(self, event):
+        if event.key() in {Qt.Key.Key_Tab, Qt.Key.Key_Backtab}:
+            if (
+                event.key() == Qt.Key.Key_Backtab
+                or event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+            ):
+                token = "SHIFT+TAB"
+                if token in self.app_actions:
+                    return token
         token = self.qt_to_token.get(event.key())
         if token:
             return token
@@ -1127,6 +1137,16 @@ class GazeEncoderApp(QWidget):
         if text:
             return text.upper()
         return None
+
+    def event(self, event):
+        if (
+            event.type() == QEvent.Type.KeyPress
+            and event.key() in {Qt.Key.Key_Tab, Qt.Key.Key_Backtab}
+            and self._token_from_event(event) in self.app_actions
+        ):
+            self.keyPressEvent(event)
+            return True
+        return super().event(event)
 
     # ==================================================
     # Redraw timeline on resize
@@ -1532,6 +1552,37 @@ class GazeEncoderApp(QWidget):
         self.update_timeline()
         if jump:
             self.goto_frame(section.start_frame)
+
+    def _section_row_at_current_frame(self) -> int:
+        count = self.section_list_widget.count()
+        current_frame = self.annotator.current_frame
+        last_before = -1
+        for row in range(count):
+            item = self.section_list_widget.item(row)
+            if item is None:
+                continue
+            section = self.annotator.section_by_id(item.data(Qt.ItemDataRole.UserRole))
+            if section is None:
+                continue
+            if section.start_frame <= current_frame <= section.end_frame:
+                return row
+            if current_frame < section.start_frame:
+                return last_before
+            last_before = row
+        return count
+
+    def select_relative_section(self, direction: int):
+        if not hasattr(self, "section_list_widget"):
+            return
+        count = self.section_list_widget.count()
+        if count <= 0:
+            return
+        row = self.section_list_widget.currentRow()
+        if row < 0:
+            row = self._section_row_at_current_frame()
+        next_row = max(0, min(count - 1, row + direction))
+        self.section_list_widget.setCurrentRow(next_row)
+        self.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def add_section_at_cursor(self):
         if not self.annotator.cap:
@@ -2064,6 +2115,12 @@ class GazeEncoderApp(QWidget):
             return
         if action == "set_section_end":
             self.set_section_end_at_cursor()
+            return
+        if action == "next_section":
+            self.select_relative_section(1)
+            return
+        if action in {"prev_section", "previous_section"}:
+            self.select_relative_section(-1)
             return
 
         if token in self.label_map:
