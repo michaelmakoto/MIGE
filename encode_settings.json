@@ -51,6 +51,7 @@
   "sections": {
     "default_duration_seconds": 10.0,
     "enable_real_time_section_update": true,
+    "auto_jump_to_next_section": false,
     "section_labels_path": "sections_settings.json"
   },
   "timings": {

@@ -35,6 +35,10 @@ class SettingsDialog(QDialog):
         self.real_time_section_update_input.setChecked(
             settings.enable_real_time_section_update()
         )
+        self.auto_jump_to_next_section_input = QCheckBox()
+        self.auto_jump_to_next_section_input.setChecked(
+            settings.auto_jump_to_next_section()
+        )
         self.section_labels_path_input = QLineEdit(settings.section_labels_path())
         self.section_labels_browse_button = QPushButton("Browse")
         self.section_labels_browse_button.clicked.connect(self._browse_section_labels)
@@ -45,6 +49,7 @@ class SettingsDialog(QDialog):
         form = QFormLayout()
         form.addRow("Default section duration", self.default_duration_input)
         form.addRow("Real-time section update", self.real_time_section_update_input)
+        form.addRow("Auto jump to next section", self.auto_jump_to_next_section_input)
         form.addRow("Section labels JSON", section_labels_row)
         form.addRow("Group IDs", self.groups_input)
 
@@ -151,6 +156,9 @@ class SettingsDialog(QDialog):
         sections["default_duration_seconds"] = self.default_duration_input.value()
         sections["enable_real_time_section_update"] = (
             self.real_time_section_update_input.isChecked()
+        )
+        sections["auto_jump_to_next_section"] = (
+            self.auto_jump_to_next_section_input.isChecked()
         )
         sections["section_labels_path"] = self.section_labels_path_input.text().strip()
         self.settings.save()

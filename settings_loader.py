@@ -70,6 +70,14 @@ class SettingsLoader:
             return value.strip().lower() in {"1", "true", "yes", "on"}
         return bool(value)
 
+    def auto_jump_to_next_section(self) -> bool:
+        value = self.sections.get("auto_jump_to_next_section", True)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
     def section_labels_path(self) -> str:
         configured = str(self.sections.get("section_labels_path", "")).strip()
         if configured:

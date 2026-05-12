@@ -171,6 +171,7 @@ class GazeEncoderApp(QWidget):
         self.enable_real_time_section_update = (
             self.settings.enable_real_time_section_update()
         )
+        self.auto_jump_to_next_section = self.settings.auto_jump_to_next_section()
         self.section_label_presets: dict[int, dict[str, str]] = {}
         self.section_label_presets_path = self.settings.resolve_section_labels_path()
         self.group_ids = list(self.settings.groups)
@@ -953,6 +954,7 @@ class GazeEncoderApp(QWidget):
             self.enable_real_time_section_update = (
                 self.settings.enable_real_time_section_update()
             )
+            self.auto_jump_to_next_section = self.settings.auto_jump_to_next_section()
             self.timeline_format = str(self.settings.timeline.get("format", "hh:mm:ss:ff"))
             self.timeline_divisions = max(1, int(self.settings.timeline.get("divisions", 10)))
             self._reload_group_combo()
@@ -1905,10 +1907,21 @@ class GazeEncoderApp(QWidget):
         if self.annotator.dirty:
             self.annotator.save_csv()
 
-    def _set_annotation(self, frame: int, mode: str, group: str):
+    def _can_encode_frame(self, frame: int) -> bool:
+        if self.auto_jump_to_next_section:
+            return True
+        section = self.annotator.section_at_frame(frame)
+        if section is None:
+            return True
+        return frame < section.end_frame
+
+    def _set_annotation(self, frame: int, mode: str, group: str) -> bool:
+        if not self._can_encode_frame(frame):
+            return False
         section = self.annotator.section_at_frame(frame)
         self.annotator.set_label(frame, mode, group, section, autosave=False)
         self._schedule_autosave()
+        return True
 
     def export_calculated_csv(self):
         if not self.annotator.cap:
@@ -2063,8 +2076,8 @@ class GazeEncoderApp(QWidget):
         if do_label and self.active_label_char is not None:
             info = self.label_map.get(self.active_label_char)
             if info:
-                self._set_annotation(idx, info["mode"], info.get("group", ""))
-                self.refresh_help_label()
+                if self._set_annotation(idx, info["mode"], info.get("group", "")):
+                    self.refresh_help_label()
 
         self.annotator.current_frame = idx
         self.show_frame(frame)
@@ -2122,6 +2135,8 @@ class GazeEncoderApp(QWidget):
     def _next_encoding_frame_after(self, frame_idx: int) -> int:
         section = self.annotator.section_at_frame(frame_idx)
         if section and frame_idx >= section.end_frame:
+            if not self.auto_jump_to_next_section:
+                return section.end_frame
             next_section = self.annotator.next_section_after(section.end_frame)
             if next_section:
                 return next_section.start_frame
@@ -2172,6 +2187,8 @@ class GazeEncoderApp(QWidget):
             return
 
         if token in self.label_map:
+            if not self._can_encode_frame(self.annotator.current_frame):
+                return
             self.active_label_char = token
             self.label_delay_timer.start(self.label_delay_ms)
             self.long_press_timer.start(self.long_press_ms)
@@ -2192,11 +2209,19 @@ class GazeEncoderApp(QWidget):
 
     def start_labeling_after_delay(self):
         if self.active_label_char and self.annotator.cap:
+            if not self._can_encode_frame(self.annotator.current_frame):
+                self.active_label_char = None
+                self.label_timer.stop()
+                self.label_delay_timer.stop()
+                self.long_press_timer.stop()
+                return
             if self.encoding_mode == "scroll":
                 info = self.label_map.get(self.active_label_char)
-                if info:
-                    self._set_annotation(
-                        self.annotator.current_frame, info["mode"], info.get("group", ""))
+                if info and self._set_annotation(
+                    self.annotator.current_frame,
+                    info["mode"],
+                    info.get("group", ""),
+                ):
                     self.update_info_label()
                     self.update_timeline()
                     self.refresh_help_label()
@@ -2204,9 +2229,11 @@ class GazeEncoderApp(QWidget):
 
             if not self.is_long_press:
                 info = self.label_map.get(self.active_label_char)
-                if info:
-                    self._set_annotation(
-                        self.annotator.current_frame, info["mode"], info.get("group", ""))
+                if info and self._set_annotation(
+                    self.annotator.current_frame,
+                    info["mode"],
+                    info.get("group", ""),
+                ):
                     self.update_timeline()
                     self.refresh_help_label()
                     next_idx = self._next_encoding_frame_after(self.annotator.current_frame)
@@ -2224,10 +2251,18 @@ class GazeEncoderApp(QWidget):
     def auto_label_step(self):
         if not self.annotator.cap or self.active_label_char is None:
             return
+        if not self._can_encode_frame(self.annotator.current_frame):
+            self.active_label_char = None
+            self.label_timer.stop()
+            self.label_delay_timer.stop()
+            self.long_press_timer.stop()
+            return
         info = self.label_map.get(self.active_label_char)
-        if info:
-            self._set_annotation(
-                self.annotator.current_frame, info["mode"], info.get("group", ""))
+        if info and self._set_annotation(
+            self.annotator.current_frame,
+            info["mode"],
+            info.get("group", ""),
+        ):
             self.update_timeline()
             self.refresh_help_label()
 
