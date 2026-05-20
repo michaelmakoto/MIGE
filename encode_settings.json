@@ -52,14 +52,14 @@
     "default_duration_seconds": 10.0,
     "enable_real_time_section_update": true,
     "auto_jump_to_next_section": false,
-    "section_labels_path": "sections_settings.json"
+    "section_labels_path": "encode_settings.json"
   },
   "timings": {
     "forward_num_frames": 1,
     "backward_num_frames": 2,
     "label_delay_ms": 10,
-    "long_press_threshold_ms": 1500,
-    "auto_label_interval_ms": 33,
+    "long_press_threshold_ms": 300,
+    "auto_label_interval_ms": 100,
     "playback_interval_ms": 33,
     "scroll_label_cooldown_ms": 0
   },

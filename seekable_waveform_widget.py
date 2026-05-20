@@ -4,6 +4,8 @@ from PyQt6.QtWidgets import QLabel
 
 class SeekableWaveformWidget(QLabel):
     frameRequested = pyqtSignal(int)
+    frameHovered = pyqtSignal(int)
+    frameExited = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -27,7 +29,13 @@ class SeekableWaveformWidget(QLabel):
         self.frameRequested.emit(self._frame_at_x(int(event.position().x())))
 
     def mouseMoveEvent(self, event):
+        frame = self._frame_at_x(int(event.position().x()))
+        self.frameHovered.emit(frame)
         if event.buttons() & Qt.MouseButton.LeftButton:
-            self.frameRequested.emit(self._frame_at_x(int(event.position().x())))
+            self.frameRequested.emit(frame)
             return
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def leaveEvent(self, event):
+        self.frameExited.emit()
+        return super().leaveEvent(event)

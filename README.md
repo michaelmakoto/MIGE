@@ -274,6 +274,19 @@ Shift+Tab    = select previous section
 
 You can change these in the Settings window. The same shortcuts are stored in `encode_settings.json` under `app_keys`, where `tab` maps to `next_section` and `shift+tab` maps to `prev_section` by default.
 
+Coding modes:
+
+```text
+default = press a label key to encode the current frame and advance; hold to encode continuously
+scroll  = hold a label key and use the mouse wheel to encode while moving frames
+paint   = long press a label key, then move over the waveform; each stroke fills skipped frames
+```
+
+Paint mode is for marking frames by moving over the waveform, like using a brush.
+Press `M` until the status shows `Mode: paint`, hold a label key until it becomes active, then move the mouse over the waveform area. You do not need to click or drag. Release the label key to stop painting.
+
+If the mouse jumps from one frame to another, MIGE labels every frame between those two points. This means fast mouse movement should not leave unlabeled holes inside the painted stroke.
+
 ### Exports
 
 Use `Export CSV` for frame-level coding data.
@@ -296,6 +309,22 @@ Common settings:
 - section label JSON file
 - real-time section update
 - mouse wheel speed
+
+Timing settings in `encode_settings.json`:
+
+All timing values ending in `_ms` are milliseconds. `1000 ms` is one second. Smaller timing values usually feel faster; larger values usually feel slower and easier to control.
+
+| Setting | What it controls | Easy example |
+| --- | --- | --- |
+| `forward_num_frames` | How many frames the Right arrow moves forward. | `1` means Right arrow goes to the next frame. |
+| `backward_num_frames` | How many frames the Left arrow moves backward. | `2` means Left arrow jumps back two frames. |
+| `label_delay_ms` | The short delay before the first label is written after you press a label key. | `10` means the first label happens almost immediately. |
+| `long_press_threshold_ms` | How long you must hold a label key before it counts as a long press. | `300` means hold for 0.3 seconds before default mode starts continuous encoding, or before paint mode starts painting. |
+| `auto_label_interval_ms` | The speed of continuous encoding in default mode after a long press. | `100` means one frame is encoded about every 0.1 seconds, or about 10 frames per second. |
+| `playback_interval_ms` | The video playback timer speed. | `33` is close to 30 frames per second playback. |
+| `scroll_label_cooldown_ms` | Reserved for scroll-mode throttling, but it is not currently used by the app. | Changing this value currently has no effect. |
+
+For slower and more controlled default-mode long pressing, increase `auto_label_interval_ms`, such as `100` or `150`. For faster continuous encoding, decrease it. If paint mode starts too quickly or too slowly, adjust `long_press_threshold_ms`.
 
 ---
 
@@ -559,6 +588,19 @@ Shift+Tab    = 前のセクションを選択
 
 これらは設定画面で変更できます。同じショートカットは `encode_settings.json` の `app_keys` にも保存されています。初期設定では、`tab` が `next_section`、`shift+tab` が `prev_section` に対応しています。
 
+コーディングモード:
+
+```text
+default = ラベルキーで現在のフレームを記録して次へ進む。長押しで連続記録
+scroll  = ラベルキーを押しながらマウスホイールで移動して記録
+paint   = ラベルキーを長押ししてから波形上でマウスを動かす。飛んだフレームも補完
+```
+
+paintモードは、波形の上をマウスでなぞってフレームを記録するモードです。
+`M`を押して表示を`Mode: paint`に切り替え、ラベルキーを長押ししてから、波形エリアの上でマウスを動かします。クリックやドラッグは不要です。ラベルキーを離すと記録を止めます。
+
+マウスがあるフレームから別のフレームへ飛んだ場合でも、MIGEはその間のフレームをまとめて記録します。そのため、速く動かしても塗った範囲の中にラベルなしの穴が残りにくくなります。
+
 ### 書き出し
 
 `Export CSV` は、フレームごとのコーディングデータを書き出します。
@@ -581,3 +623,19 @@ Shift+Tab    = 前のセクションを選択
 - セクションラベルJSONファイル
 - セクションのリアルタイム更新
 - マウスホイールの移動量
+
+`encode_settings.json` のタイミング設定:
+
+名前が `_ms` で終わる値はミリ秒です。`1000 ms` が1秒です。数値を小さくすると速くなりやすく、数値を大きくするとゆっくりで操作しやすくなります。
+
+| 設定 | 何を調整するか | かんたんな例 |
+| --- | --- | --- |
+| `forward_num_frames` | 右矢印キーで前に進むフレーム数。 | `1` なら右矢印で1フレーム進みます。 |
+| `backward_num_frames` | 左矢印キーで戻るフレーム数。 | `2` なら左矢印で2フレーム戻ります。 |
+| `label_delay_ms` | ラベルキーを押してから最初の記録が行われるまでの短い待ち時間。 | `10` ならほぼすぐに最初のラベルが記録されます。 |
+| `long_press_threshold_ms` | ラベルキーを何ミリ秒押し続けたら長押しとして扱うか。 | `300` なら0.3秒押すと、defaultモードでは連続記録、paintモードではペイント開始になります。 |
+| `auto_label_interval_ms` | defaultモードで長押しした後の連続記録の速さ。 | `100` なら約0.1秒ごと、つまり約10フレーム/秒で記録します。 |
+| `playback_interval_ms` | 動画再生時のタイマー速度。 | `33` は約30フレーム/秒の再生に近い値です。 |
+| `scroll_label_cooldown_ms` | scrollモードの連続記録を制限するための予約設定ですが、現在のアプリでは使われていません。 | 今はこの値を変更しても動作は変わりません。 |
+
+defaultモードの長押しが速すぎる場合は、`auto_label_interval_ms` を `100` や `150` のように大きくすると、ゆっくり記録できます。paintモードの開始が早すぎる、または遅すぎる場合は、`long_press_threshold_ms` を調整します。

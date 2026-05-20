@@ -202,6 +202,8 @@ class GazeEncoderApp(QWidget):
         self.label_delay_timer.timeout.connect(self.start_labeling_after_delay)
 
         self.active_label_char: str | None = None
+        self.waveform_hover_frame: int | None = None
+        self.paint_last_frame: int | None = None
 
         self.play_timer = QTimer()
         self.play_timer.timeout.connect(self.play_next_frame)
@@ -581,6 +583,8 @@ class GazeEncoderApp(QWidget):
 
         self.waveform_label = SeekableWaveformWidget()
         self.waveform_label.frameRequested.connect(self.goto_waveform_frame)
+        self.waveform_label.frameHovered.connect(self.paint_waveform_frame)
+        self.waveform_label.frameExited.connect(self.clear_waveform_paint_position)
         self.waveform_label.setMinimumHeight(60)
         self.waveform_label.setMaximumHeight(60)
         self.waveform_label.setSizePolicy(
@@ -1087,9 +1091,10 @@ class GazeEncoderApp(QWidget):
             "Labeling keys:\n"
             f"{label_lines}\n"
             "\n"
-            "Switch mode with default/scroll\n"
+            "Switch mode with default/scroll/paint\n"
             "    default: Press key to label -> next frame / hold for continuous\n"
             "    scroll: Hold key while using wheel to fill\n"
+            "    paint: Long press key, then move over waveform to fill strokes\n"
             "\n"
         )
 
@@ -1169,6 +1174,8 @@ class GazeEncoderApp(QWidget):
         self.play_timer.setInterval(int(playback_interval / self.play_speed))
 
         self.active_label_char = None
+        self.waveform_hover_frame = None
+        self.paint_last_frame = None
         self.label_timer.stop()
         self.label_delay_timer.stop()
         self.long_press_timer.stop()
@@ -1923,6 +1930,25 @@ class GazeEncoderApp(QWidget):
         self._schedule_autosave()
         return True
 
+    def _set_annotation_range(self, start: int, end: int, mode: str, group: str) -> bool:
+        if not self.annotator.cap:
+            return False
+        start = max(0, min(self.annotator.frame_count - 1, start))
+        end = max(0, min(self.annotator.frame_count - 1, end))
+        if start > end:
+            start, end = end, start
+
+        changed = False
+        for frame in range(start, end + 1):
+            if not self._can_encode_frame(frame):
+                continue
+            section = self.annotator.section_at_frame(frame)
+            self.annotator.set_label(frame, mode, group, section, autosave=False)
+            changed = True
+        if changed:
+            self._schedule_autosave()
+        return changed
+
     def export_calculated_csv(self):
         if not self.annotator.cap:
             QMessageBox.warning(self, "Warning", "No video loaded")
@@ -2069,6 +2095,45 @@ class GazeEncoderApp(QWidget):
         self.goto_frame(idx, center_on_frame=False)
         self.setFocus(Qt.FocusReason.MouseFocusReason)
 
+    def end_waveform_paint_stroke(self):
+        self.paint_last_frame = None
+
+    def clear_waveform_paint_position(self):
+        self.waveform_hover_frame = None
+        self.end_waveform_paint_stroke()
+
+    def paint_waveform_frame(self, idx: int):
+        if self.annotator.cap:
+            idx = max(0, min(self.annotator.frame_count - 1, idx))
+            self.waveform_hover_frame = idx
+        else:
+            self.waveform_hover_frame = None
+
+        if (
+            self.encoding_mode != "paint"
+            or not self.annotator.cap
+            or self.active_label_char is None
+            or not self.is_long_press
+        ):
+            self.paint_last_frame = None
+            return
+
+        info = self.label_map.get(self.active_label_char)
+        if not info:
+            return
+
+        start = idx if self.paint_last_frame is None else self.paint_last_frame
+        changed = self._set_annotation_range(
+            start,
+            idx,
+            info["mode"],
+            info.get("group", ""),
+        )
+        self.paint_last_frame = idx
+        self.goto_frame(idx, do_label=False, center_on_frame=False)
+        if changed:
+            self.refresh_help_label()
+
     def goto_frame(self, idx, do_label=False, center_on_frame=True):
         frame = self.annotator.get_frame(idx)
         if frame is None:
@@ -2145,12 +2210,21 @@ class GazeEncoderApp(QWidget):
     # ==================================================
     # Labeling (key)
     # ==================================================
+    def _cycle_encoding_mode(self):
+        modes = ["default", "scroll", "paint"]
+        try:
+            next_index = (modes.index(self.encoding_mode) + 1) % len(modes)
+        except ValueError:
+            next_index = 0
+        self.encoding_mode = modes[next_index]
+        self.mode_label.setText(f"Mode: {self.encoding_mode}")
+        self.end_waveform_paint_stroke()
+
     def keyPressEvent(self, event):
         token = self._token_from_event(event)
         action = self.app_actions.get(token) if token else None
         if action == "toggle_mode":
-            self.encoding_mode = "scroll" if self.encoding_mode == "default" else "default"
-            self.mode_label.setText(f"Mode: {self.encoding_mode}")
+            self._cycle_encoding_mode()
             return
         if action == "toggle_play":
             self.toggle_play()
@@ -2186,8 +2260,17 @@ class GazeEncoderApp(QWidget):
             self.navigate_relative_section_boundary(-1)
             return
 
+        if (
+            token in self.label_map
+            and event.isAutoRepeat()
+            and self.active_label_char == token
+        ):
+            return
+
         if token in self.label_map:
-            if not self._can_encode_frame(self.annotator.current_frame):
+            if self.encoding_mode != "paint" and not self._can_encode_frame(
+                self.annotator.current_frame
+            ):
                 return
             self.active_label_char = token
             self.label_delay_timer.start(self.label_delay_ms)
@@ -2200,7 +2283,10 @@ class GazeEncoderApp(QWidget):
     def keyReleaseEvent(self, event):
         token = self._token_from_event(event)
         if token and self.active_label_char == token:
+            if event.isAutoRepeat():
+                return
             self.active_label_char = None
+            self.end_waveform_paint_stroke()
             self.label_timer.stop()
             self.label_delay_timer.stop()
             self.long_press_timer.stop()
@@ -2209,8 +2295,11 @@ class GazeEncoderApp(QWidget):
 
     def start_labeling_after_delay(self):
         if self.active_label_char and self.annotator.cap:
+            if self.encoding_mode == "paint":
+                return
             if not self._can_encode_frame(self.annotator.current_frame):
                 self.active_label_char = None
+                self.end_waveform_paint_stroke()
                 self.label_timer.stop()
                 self.label_delay_timer.stop()
                 self.long_press_timer.stop()
@@ -2245,6 +2334,9 @@ class GazeEncoderApp(QWidget):
         if self.active_label_char is None:
             return
         self.is_long_press = True
+        if self.encoding_mode == "paint":
+            self.paint_last_frame = self.waveform_hover_frame
+            return
         if not self.label_timer.isActive():
             self.label_timer.start()
 
@@ -2253,6 +2345,7 @@ class GazeEncoderApp(QWidget):
             return
         if not self._can_encode_frame(self.annotator.current_frame):
             self.active_label_char = None
+            self.end_waveform_paint_stroke()
             self.label_timer.stop()
             self.label_delay_timer.stop()
             self.long_press_timer.stop()
@@ -2295,7 +2388,10 @@ class GazeEncoderApp(QWidget):
             else:
                 self.goto_frame(idx, do_label=False)
         else:
-            do_label = self.active_label_char is not None
+            do_label = (
+                self.encoding_mode == "default"
+                and self.active_label_char is not None
+            )
             self.goto_frame(idx, do_label)
 
     # ==================================================
