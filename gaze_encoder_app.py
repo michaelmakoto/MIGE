@@ -4,6 +4,7 @@ import math
 import re
 import shutil
 import subprocess
+import time
 
 import cv2
 import numpy as np
@@ -206,8 +207,12 @@ class GazeEncoderApp(QWidget):
         self.paint_last_frame: int | None = None
 
         self.play_timer = QTimer()
+        self.play_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.play_timer.timeout.connect(self.play_next_frame)
         self.play_speed = 1.0
+        self._play_start_frame = 0
+        self._play_start_time = 0.0
+        self._play_audio_start_us = 0
 
         self.autosave_timer = QTimer()
         self.autosave_timer.setSingleShot(True)
@@ -1181,6 +1186,9 @@ class GazeEncoderApp(QWidget):
         self.long_press_timer.stop()
         self.play_timer.stop()
         self._audio_stop()
+        self._play_start_frame = 0
+        self._play_start_time = 0.0
+        self._play_audio_start_us = 0
         self._zoom_slider.setValue(1)
 
         file_name = os.path.basename(path)
@@ -1468,6 +1476,12 @@ class GazeEncoderApp(QWidget):
             self.timeline_divisions,
             self.selected_section_id,
         )
+
+    def update_timeline_cursor(self):
+        if not self.timeline_renderer:
+            return
+        if not self.timeline_renderer.render_cursor(self.annotator):
+            self.update_timeline()
 
     def _frame_to_seconds(self, frame: int) -> float:
         return frame / max(self.annotator.fps, 1.0)
@@ -2174,27 +2188,63 @@ class GazeEncoderApp(QWidget):
     # ==================================================
     # Playback
     # ==================================================
+    def _start_playback(self):
+        self._play_start_frame = self.annotator.current_frame
+        self._play_start_time = time.perf_counter()
+        self._audio_play_from_frame(self.annotator.current_frame)
+        self._play_audio_start_us = (
+            self._audio_sink.processedUSecs() if self._audio_sink is not None else 0
+        )
+        self.play_timer.start()
+
+    def _stop_playback(self):
+        self.play_timer.stop()
+        self._audio_stop()
+        self._play_start_time = 0.0
+        self._play_audio_start_us = 0
+
+    def _playback_elapsed_seconds(self) -> float:
+        if self._audio_sink is not None:
+            processed_us = self._audio_sink.processedUSecs() - self._play_audio_start_us
+            if processed_us > 0:
+                return processed_us / 1_000_000.0
+        if self._play_start_time <= 0:
+            return 0.0
+        return time.perf_counter() - self._play_start_time
+
     def toggle_play(self):
         if not self.annotator.cap:
             return
         if self.play_timer.isActive():
-            self.play_timer.stop()
-            self._audio_stop()
+            self._stop_playback()
         else:
-            self._audio_play_from_frame(self.annotator.current_frame)
-            self.play_timer.start()
+            self._start_playback()
 
     def play_next_frame(self):
-        frame = self.annotator.read_next_frame()
+        fps = max(self.annotator.fps, 1.0)
+        elapsed = self._playback_elapsed_seconds()
+        target_idx = self._play_start_frame + int(round(elapsed * fps))
+        if target_idx <= self.annotator.current_frame:
+            return
+
+        if target_idx >= self.annotator.frame_count:
+            self._stop_playback()
+            return
+
+        if target_idx == self.annotator.current_frame + 1:
+            frame = self.annotator.read_next_frame()
+        else:
+            frame = self.annotator.get_frame(target_idx)
+
         if frame is None:
-            self.toggle_play()
+            self._stop_playback()
             return
 
         self.show_frame(frame)
         self._set_seek_slider_value(self.annotator.current_frame)
         self.update_info_label()
         self.update_waveform()
-        self.update_timeline()
+        self.update_timeline_cursor()
         self._scroll_to_frame(self.annotator.current_frame)
 
     def _next_encoding_frame_after(self, frame_idx: int) -> int:
