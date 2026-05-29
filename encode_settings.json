@@ -56,10 +56,10 @@
   },
   "timings": {
     "forward_num_frames": 1,
-    "backward_num_frames": 2,
+    "backward_num_frames": 3,
     "label_delay_ms": 10,
     "long_press_threshold_ms": 300,
-    "auto_label_interval_ms": 40,
+    "auto_label_interval_ms": 60,
     "playback_interval_ms": 33,
     "scroll_label_cooldown_ms": 0
   },

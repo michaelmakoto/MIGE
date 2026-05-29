@@ -9,6 +9,7 @@ class TimelineRenderer:
     def __init__(self, timeline_label: QLabel, tick_label: QLabel):
         self.timeline_label = timeline_label
         self.tick_label = tick_label
+        self._static_pixmap: QPixmap | None = None
 
     def render(
         self,
@@ -21,6 +22,7 @@ class TimelineRenderer:
         if not annotator.cap:
             self.timeline_label.clear()
             self.tick_label.clear()
+            self._static_pixmap = None
             return
 
         width = self.timeline_label.width()
@@ -109,14 +111,36 @@ class TimelineRenderer:
                 "Drag here to add a section",
             )
 
+        painter.end()
+        self._static_pixmap = QPixmap.fromImage(img)
+        self.render_cursor(annotator)
+        self._draw_ticks(annotator, format_frame_display, timeline_divisions)
+
+    def render_cursor(self, annotator) -> bool:
+        if not annotator.cap:
+            self.timeline_label.clear()
+            self._static_pixmap = None
+            return True
+
+        width = self.timeline_label.width()
+        height = self.timeline_label.height()
+        if (
+            self._static_pixmap is None
+            or self._static_pixmap.width() != width
+            or self._static_pixmap.height() != height
+        ):
+            return False
+
+        pix = QPixmap(self._static_pixmap)
         if annotator.frame_count > 1:
             cursor_x = int(annotator.current_frame / (annotator.frame_count - 1) * (width - 1))
+            painter = QPainter(pix)
             painter.setPen(QPen(QColor("#64d692"), 2))
             painter.drawLine(cursor_x, 0, cursor_x, height)
+            painter.end()
 
-        painter.end()
-        self.timeline_label.setPixmap(QPixmap.fromImage(img))
-        self._draw_ticks(annotator, format_frame_display, timeline_divisions)
+        self.timeline_label.setPixmap(pix)
+        return True
 
     def _draw_ticks(self, annotator, format_frame_display, timeline_divisions: int):
         if not annotator.cap:
