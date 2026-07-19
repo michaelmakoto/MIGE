@@ -571,8 +571,8 @@ class GazeEncoderApp(QWidget):
         self.timeline_label.sectionChanged.connect(self.move_section_from_timeline)
         self.timeline_label.sectionCreated.connect(self.create_section_from_timeline)
         self.timeline_label.sectionLabelEditRequested.connect(self.edit_section_label_inline)
-        self.timeline_label.setMinimumHeight(96)
-        self.timeline_label.setMaximumHeight(96)
+        self.timeline_label.setMinimumHeight(80)
+        self.timeline_label.setMaximumHeight(90)
         self.timeline_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.timeline_label.setStyleSheet("background-color: #15171b;")
@@ -590,7 +590,7 @@ class GazeEncoderApp(QWidget):
         self.waveform_label.frameRequested.connect(self.goto_waveform_frame)
         self.waveform_label.frameHovered.connect(self.paint_waveform_frame)
         self.waveform_label.frameExited.connect(self.clear_waveform_paint_position)
-        self.waveform_label.setMinimumHeight(60)
+        self.waveform_label.setMinimumHeight(50)
         self.waveform_label.setMaximumHeight(60)
         self.waveform_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)

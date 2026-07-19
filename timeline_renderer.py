@@ -60,7 +60,7 @@ class TimelineRenderer:
         painter = QPainter(img)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
-        section_h = max(34, int(height * 0.58))
+        section_h = max(25, int(height * 0.58))
         annotation_y = section_h + 5
         annotation_h = max(12, height - annotation_y - 3)
 
