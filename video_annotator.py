@@ -5,9 +5,12 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
+import av
 import cv2
 import numpy as np
-from moviepy import VideoFileClip
+
+# Waveform and playback audio rate (the rate moviepy used to produce).
+AUDIO_SAMPLE_RATE = 44100
 
 
 @dataclass
@@ -39,6 +42,7 @@ class VideoAnnotatorCore:
         self.path: Optional[str] = None
         self.frame_count = 0
         self.fps = 30.0
+        self.video_start_seconds = 0.0
         self.current_frame = 0
         self.annotations: dict[int, dict[str, str]] = {}
         self.sections: list[VideoSection] = []
@@ -59,11 +63,16 @@ class VideoAnnotatorCore:
 
         self.cap = cap
         self.path = filepath
-        fps = float(self.cap.get(cv2.CAP_PROP_FPS))
-        self.fps = fps if fps > 0 else 30.0
         self.current_frame = 0
         self.frame_cache = []
-        self.frame_count = self._read_frame_count(cap)
+        timing = self._probe_video_timing(filepath)
+        if timing is not None:
+            self.frame_count, self.fps, self.video_start_seconds = timing
+        else:
+            fps = float(self.cap.get(cv2.CAP_PROP_FPS))
+            self.fps = fps if fps > 0 else 30.0
+            self.frame_count = self._read_frame_count(cap)
+            self.video_start_seconds = 0.0
 
         self.annotations.clear()
         self.sections.clear()
@@ -86,6 +95,33 @@ class VideoAnnotatorCore:
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
         return True
+
+    def _probe_video_timing(self, filepath: str) -> tuple[int, float, float] | None:
+        """Return (frame_count, fps, first_frame_seconds) from video packet timestamps.
+
+        OpenCV's header values can be wrong: sample.mp4 reports 264 frames at
+        29.93 fps, but its edit list hides 40 frames and the real rate is 30.
+        Packets the edit list hides are flagged as discard and skipped here.
+        Only timestamps are read; nothing is decoded.
+        """
+        try:
+            with av.open(filepath) as container:
+                stream = container.streams.video[0]
+                time_base = stream.time_base
+                pts = [
+                    packet.pts
+                    for packet in container.demux(stream)
+                    if packet.size and packet.pts is not None and not packet.is_discard
+                ]
+        except Exception:
+            return None
+        if len(pts) < 2:
+            return None
+        first = min(pts) * time_base
+        last = max(pts) * time_base
+        if last <= first:
+            return None
+        return len(pts), float((len(pts) - 1) / (last - first)), float(first)
 
     def _read_frame_count(self, cap: cv2.VideoCapture) -> int:
         frame_count = int(round(float(cap.get(cv2.CAP_PROP_FRAME_COUNT))))
@@ -565,26 +601,42 @@ class VideoAnnotatorCore:
     # Audio
     # -----------------------------
     def get_audio_samples(self) -> tuple["np.ndarray | None", int]:
-        """Return (mono float32 samples, sample_rate), or (None, 0) if no audio."""
+        """Return (mono float32 samples, sample_rate), or (None, 0) if no audio.
+
+        Sample 0 lines up with video frame 0: if the audio stream starts after
+        the first video frame, silence is added in front; if it starts before,
+        the extra audio is cut.
+        """
         if not self.path:
             return None, 0
         try:
-            clip = VideoFileClip(self.path)
-            if clip.audio is None:
-                clip.close()
-                return None, 0
-            sample_rate = int(clip.audio.fps)
-            samples = clip.audio.to_soundarray()
-            clip.close()
-            if samples.ndim > 1:
-                samples = samples.mean(axis=1)
-            samples = samples.astype(np.float32)
-            peak = np.max(np.abs(samples))
-            if peak > 0:
-                samples /= peak
-            return samples, sample_rate
+            with av.open(self.path) as container:
+                if not container.streams.audio:
+                    return None, 0
+                resampler = av.AudioResampler(format="flt", layout="mono", rate=AUDIO_SAMPLE_RATE)
+                chunks = []
+                audio_start = None
+                for frame in container.decode(container.streams.audio[0]):
+                    if audio_start is None and frame.time is not None:
+                        audio_start = frame.time
+                    chunks.extend(out.to_ndarray().reshape(-1) for out in resampler.resample(frame))
+                chunks.extend(out.to_ndarray().reshape(-1) for out in resampler.resample(None))
         except Exception:
             return None, 0
+        if not chunks:
+            return None, 0
+
+        samples = np.concatenate(chunks).astype(np.float32)
+        if audio_start is not None:
+            offset = int(round((audio_start - self.video_start_seconds) * AUDIO_SAMPLE_RATE))
+            if offset > 0:
+                samples = np.concatenate([np.zeros(offset, dtype=np.float32), samples])
+            elif offset < 0:
+                samples = samples[-offset:]
+        peak = np.max(np.abs(samples)) if len(samples) else 0
+        if peak > 0:
+            samples /= peak
+        return samples, AUDIO_SAMPLE_RATE
 
     # -----------------------------
     # Labels

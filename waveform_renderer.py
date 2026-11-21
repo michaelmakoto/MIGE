@@ -34,7 +34,7 @@ class WaveformRenderer:
         """Paint waveform bars once; cursor is added separately each frame."""
         pix = QPixmap(w, h)
         pix.fill(QColor("#0f1114"))
-        if self.samples is None or len(self.samples) == 0:
+        if self.samples is None or len(self.samples) == 0 or self.frame_count <= 1:
             return pix
 
         painter = QPainter(pix)
@@ -43,10 +43,15 @@ class WaveformRenderer:
         total = len(self.samples)
         painter.setPen(QPen(QColor("#3d7bc6"), 1))
 
-        # Map each pixel directly to a sample range — no frame-count dependency.
+        # Map pixels to time with the same frame -> x mapping as the cursor,
+        # so audio longer or shorter than the video is not stretched to fit.
+        frames_per_px = (self.frame_count - 1) / max(1, w - 1)
+        samples_per_frame = self.sample_rate / max(1.0, self.fps)
         for px in range(w):
-            s_start = int(px * total / w)
-            s_end = int((px + 1) * total / w)
+            s_start = int(px * frames_per_px * samples_per_frame)
+            if s_start >= total:
+                break
+            s_end = int((px + 1) * frames_per_px * samples_per_frame)
             s_end = max(s_start + 1, min(s_end, total))
 
             chunk = self.samples[s_start:s_end]
